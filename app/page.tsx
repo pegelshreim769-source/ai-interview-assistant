@@ -2,6 +2,43 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: {
+    transcript: string;
+  };
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionErrorEventLike = {
+  error: string;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor;
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  }
+}
+
 type AnalysisResult = {
   mode: "ask_followup" | "generate_practice";
   judgement: {
@@ -100,6 +137,57 @@ function ThinkingIndicator({ label = "正在思考" }: { label?: string }) {
   );
 }
 
+function MicrophoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="icon-svg">
+      <path
+        d="M12 15.25a3.75 3.75 0 0 0 3.75-3.75V7a3.75 3.75 0 1 0-7.5 0v4.5A3.75 3.75 0 0 0 12 15.25Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M5.75 11.5a6.25 6.25 0 1 0 12.5 0M12 17.75V21M9 21h6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="icon-svg">
+      <path
+        d="M12 18V6M12 6l-4.5 4.5M12 6l4.5 4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function VoiceWave({ level }: { level: number }) {
+  const bars = [0.35, 0.55, 0.8, 1, 0.8, 0.55];
+
+  return (
+    <div className="voice-wave" aria-hidden="true">
+      {bars.map((scale, index) => {
+        const height = 8 + Math.max(4, Math.round(level * 28 * scale));
+        return <span key={`${scale}-${index}`} style={{ height }} />;
+      })}
+    </div>
+  );
+}
+
 function getJudgementSummary(result: AnalysisResult) {
   return [
     result.judgement.has_background ? "背景明确" : "背景缺口",
@@ -132,6 +220,21 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function formatSeconds(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const seconds = Math.floor(totalSeconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function mergeVoiceDraft(base: string, finalText: string, interimText = "") {
+  const merged = [base.trim(), finalText.trim(), interimText.trim()].filter(Boolean).join(base.trim() ? "\n" : "");
+  return merged;
+}
+
 function AssistantBubble({
   turn,
   supplementDraft,
@@ -161,7 +264,7 @@ function AssistantBubble({
       <div className="assistant-bubble">
         <div className="reply-block score-block">
           <div className="reply-block-header">
-            <p className="section-tag">评分</p>
+            <p className="section-tag">这版回答，现在大概在哪个档位</p>
             <span className="score-badge">{turn.result.score.tier || "正在看"}</span>
           </div>
           {turn.isStreaming ? <ThinkingIndicator /> : null}
@@ -170,7 +273,7 @@ function AssistantBubble({
             <span>/ 100</span>
           </div>
           <p className="reply-text">
-            {turn.result.score.summary || (turn.isStreaming ? "正在帮你整理这段回答…" : "这里会先告诉你，这一版回答大概处在什么水平。")}
+            {turn.result.score.summary || (turn.isStreaming ? "正在帮你判断这版回答目前大概在哪个水平…" : "我会先告诉你，这一版回答目前大概在哪个水平。")}
           </p>
           {turn.result.reason ? <p className="module-caption">{turn.result.reason}</p> : null}
         </div>
@@ -180,7 +283,7 @@ function AssistantBubble({
             <p className="section-tag">这版回答最大的问题</p>
           </div>
           <p className="reply-text">
-            {turn.result.main_issue || (turn.isStreaming ? "正在提炼这段回答里最容易卡住面试官的点..." : "这里会直接点出这段回答现在最影响效果的问题。")}
+            {turn.result.main_issue || (turn.isStreaming ? "正在提炼这版回答里最容易让面试官卡住的点..." : "通常不是没做过，而是还没把能被判断的信息讲出来。这里会先抓最核心的那个问题。")}
           </p>
         </div>
 
@@ -188,7 +291,7 @@ function AssistantBubble({
           <div className="reply-block-header">
             <div>
               <p className="section-tag">面试官下一句大概率会追问什么</p>
-              <p className="module-caption">把这些信息补充给我，我再帮你整理成更适合真实面试开口练的版本。</p>
+              <p className="module-caption">很多时候不是没做过，而是还没把面试官能判断的信息讲出来。我会沿着这个点继续追问。</p>
             </div>
           </div>
 
@@ -214,8 +317,8 @@ function AssistantBubble({
 
             {turn.result.mode === "ask_followup" && !turn.isStreaming ? (
               <aside className="followup-side-panel">
-                <p className="followup-side-title">在这里补充</p>
-                <p className="followup-side-copy">把这些真实信息补充给我后，我会基于原回答加这一轮补充，生成一轮新的问答，不会覆盖前面的内容。</p>
+                <p className="followup-side-title">把这些真实信息补充给我</p>
+                <p className="followup-side-copy">不用写得很完整，把你刚才没来得及讲清的背景、动作和结果补上就行。我会接着这一轮往下练。</p>
                 <label className="followup-label" htmlFor={`supplement-${turn.id}`}>
                   你的补充
                 </label>
@@ -289,30 +392,255 @@ function AssistantBubble({
 }
 
 export default function HomePage() {
-  const [draft, setDraft] = useState(starterAnswer);
+  const [draft, setDraft] = useState("");
   const [conversation, setConversation] = useState<ConversationTurn[]>([]);
   const [baseAnswer, setBaseAnswer] = useState("");
   const [supplements, setSupplements] = useState<string[]>([]);
   const [pendingSupplementFor, setPendingSupplementFor] = useState<string | null>(null);
   const [supplementDraft, setSupplementDraft] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [voiceStatus, setVoiceStatus] = useState("");
   const [error, setError] = useState("");
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
-  const supplementRef = useRef<HTMLTextAreaElement | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const recordingIntervalRef = useRef<number | null>(null);
+  const recordingTimeoutRef = useRef<number | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const shouldKeepRecordingRef = useRef(false);
+  const voiceBaseDraftRef = useRef("");
+  const voiceFinalTextRef = useRef("");
+  const voiceInterimTextRef = useRef("");
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioDataRef = useRef<Uint8Array | null>(null);
+
+  function clearRecordingTimers() {
+    if (recordingIntervalRef.current) {
+      window.clearInterval(recordingIntervalRef.current);
+      recordingIntervalRef.current = null;
+    }
+
+    if (recordingTimeoutRef.current) {
+      window.clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+  }
+
+  function teardownRecognition() {
+    if (recognitionRef.current) {
+      recognitionRef.current.onresult = null;
+      recognitionRef.current.onerror = null;
+      recognitionRef.current.onend = null;
+      recognitionRef.current = null;
+    }
+  }
+
+  function stopAudioMeter() {
+    if (animationFrameRef.current) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    analyserRef.current = null;
+    audioDataRef.current = null;
+    setAudioLevel(0);
+  }
+
+  function finalizeVoiceRecording() {
+    shouldKeepRecordingRef.current = false;
+    clearRecordingTimers();
+    setIsRecording(false);
+    setRecordingSeconds(0);
+    voiceInterimTextRef.current = "";
+    stopAudioMeter();
+    teardownRecognition();
+  }
+
+  function stopVoiceInput(manual = false) {
+    shouldKeepRecordingRef.current = false;
+    clearRecordingTimers();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        recognitionRef.current.abort();
+      }
+    } else {
+      finalizeVoiceRecording();
+    }
+
+    if (manual) {
+      setVoiceStatus("录音已停止");
+    }
+  }
+
+  async function startAudioMeter() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error("当前浏览器暂不支持麦克风采集。");
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioContext = new AudioContext();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 128;
+    analyser.smoothingTimeConstant = 0.85;
+
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+
+    mediaStreamRef.current = stream;
+    audioContextRef.current = audioContext;
+    analyserRef.current = analyser;
+    audioDataRef.current = new Uint8Array(analyser.frequencyBinCount);
+
+    const updateLevel = () => {
+      if (!analyserRef.current || !audioDataRef.current) return;
+
+      analyserRef.current.getByteFrequencyData(audioDataRef.current);
+      const average = audioDataRef.current.reduce((sum: number, value: number) => sum + value, 0) / audioDataRef.current.length;
+      setAudioLevel(Math.min(1, average / 96));
+      animationFrameRef.current = window.requestAnimationFrame(updateLevel);
+    };
+
+    updateLevel();
+  }
+
+  function startRecognitionSession() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!Recognition) {
+      shouldKeepRecordingRef.current = false;
+      clearRecordingTimers();
+      setIsRecording(false);
+      setRecordingSeconds(0);
+      setVoiceStatus("");
+      setError("当前浏览器暂不支持语音转文字，请改用 Chrome 再试。");
+      return false;
+    }
+
+    const recognition = new Recognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "zh-CN";
+
+    recognition.onresult = (event) => {
+      let interimText = "";
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const transcript = result[0]?.transcript ?? "";
+
+        if (result.isFinal) {
+          voiceFinalTextRef.current = `${voiceFinalTextRef.current}${transcript}`;
+        } else {
+          interimText += transcript;
+        }
+      }
+
+      voiceInterimTextRef.current = interimText;
+      setDraft(mergeVoiceDraft(voiceBaseDraftRef.current, voiceFinalTextRef.current, interimText));
+    };
+
+    recognition.onerror = (event) => {
+      const message =
+        event.error === "not-allowed"
+          ? "没有拿到麦克风权限，请允许浏览器访问麦克风。"
+          : event.error === "no-speech"
+            ? "没有识别到语音，你可以再说一遍。"
+            : "语音转文字出了点问题，请再试一次。";
+
+      setError(message);
+      stopVoiceInput();
+    };
+
+    recognition.onend = () => {
+      if (shouldKeepRecordingRef.current) {
+        startRecognitionSession();
+        return;
+      }
+
+      finalizeVoiceRecording();
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    return true;
+  }
+
+  async function handleVoiceToggle() {
+    if (isAnalyzing) return;
+
+    if (isRecording) {
+      stopVoiceInput(true);
+      return;
+    }
+
+    setError("");
+    setVoiceStatus("正在听你说");
+    setIsRecording(true);
+    setRecordingSeconds(0);
+    shouldKeepRecordingRef.current = true;
+    voiceBaseDraftRef.current = draft.trim();
+    voiceFinalTextRef.current = "";
+    voiceInterimTextRef.current = "";
+
+    try {
+      await startAudioMeter();
+    } catch (voiceError) {
+      shouldKeepRecordingRef.current = false;
+      setIsRecording(false);
+      setVoiceStatus("");
+      setError(voiceError instanceof Error ? voiceError.message : "无法打开麦克风，请稍后再试。");
+      return;
+    }
+
+    recordingIntervalRef.current = window.setInterval(() => {
+      setRecordingSeconds((current) => {
+        if (current >= 299) {
+          stopVoiceInput();
+          setVoiceStatus("已到 5 分钟，录音已自动停止");
+          return 300;
+        }
+
+        return current + 1;
+      });
+    }, 1000);
+
+    recordingTimeoutRef.current = window.setTimeout(() => {
+      stopVoiceInput();
+      setVoiceStatus("已到 5 分钟，录音已自动停止");
+    }, 300000);
+
+    const started = startRecognitionSession();
+    if (!started) return;
+  }
 
   useEffect(() => {
     const textarea = draftRef.current;
     if (!textarea) return;
     textarea.style.height = "0px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
   }, [draft]);
 
   useEffect(() => {
-    const textarea = supplementRef.current;
-    if (!textarea) return;
-    textarea.style.height = "0px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
-  }, [supplementDraft, pendingSupplementFor]);
+    return () => {
+      stopVoiceInput();
+    };
+  }, []);
 
   async function streamAnalysis(answer: string, supplementText: string, userTurn: UserTurn) {
     const assistantId = createId("assistant");
@@ -407,7 +735,9 @@ export default function HomePage() {
     setPendingSupplementFor(null);
     setSupplementDraft("");
     setDraft("");
+    setVoiceStatus("");
     setConversation([]);
+    if (isRecording) stopVoiceInput();
 
     try {
       const userTurn: UserTurn = {
@@ -462,16 +792,18 @@ export default function HomePage() {
     void handleInitialSubmit(starterAnswer);
   }
 
+  function handleDraftKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      void handleInitialSubmit();
+    }
+  }
+
   return (
     <main className="chat-shell">
       <section className="chat-header">
-        <div>
-          <p className="brand-name">AI INTERVIEW ASSISTANT</p>
-          <h1 className="page-title">你不是没内容，只是还没把重点讲出来。</h1>
-          <p className="header-subtitle">
-            用对话的方式练面试会更接近真实场景。你先说一版，我来指出卡点；如果信息不够，我就继续追问，你补上后我们再往下练。
-          </p>
-        </div>
+        <p className="brand-name">INTERVIEW LAB</p>
+        <p className="header-subtitle">先写你现在会怎么说。我会按真实面试的节奏继续追问，再陪你把它讲顺。</p>
       </section>
 
       <section className="chat-thread">
@@ -479,11 +811,8 @@ export default function HomePage() {
           <div className="empty-thread">
             <div className="assistant-avatar">AI</div>
             <div className="assistant-bubble empty-bubble">
-              <p className="section-tag">开始练习</p>
-              <h3 className="empty-state-title">先把你现在会说的那版发出来，我们一轮一轮往下练。</h3>
-              <p className="empty-state-copy">
-                这里不会只给你一次性的结果。更像真实面试场景：你先回答，我来给反馈；如果信息不够，我会继续追问；你补充后，我们再生成新的评分和下一版答案。
-              </p>
+              <p className="empty-state-title">先发一版你真实会说出口的回答。</p>
+              <p className="empty-state-copy">如果信息不够，我会继续追问；你补上后，我们再生成新一轮反馈。</p>
             </div>
           </div>
         ) : (
@@ -491,7 +820,7 @@ export default function HomePage() {
             turn.role === "user" ? (
               <div className="chat-row user-row" key={turn.id}>
                 <div className="user-bubble">
-                  <p className="user-label">{turn.kind === "initial" ? "我的原回答" : "我补充的信息"}</p>
+                  <p className="user-label">{turn.kind === "initial" ? "你现在会怎么回答" : "你补充的真实信息"}</p>
                   <p className="user-text">{turn.content}</p>
                 </div>
               </div>
@@ -514,37 +843,63 @@ export default function HomePage() {
 
       <section className="composer-dock">
         <div className="composer-card">
-          <div className="composer-heading">
-            <div>
-              <p className="section-tag">你的回答</p>
-              <h2>先别想标准答案，把你现在会说的那版写下来</h2>
-              <p className="composer-description">不用写得很完美。越接近你真实开口时的状态，后面的追问和练习越有价值。</p>
+          <div className="composer-input-shell">
+            <textarea
+              ref={draftRef}
+              className="composer-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleDraftKeyDown}
+              placeholder="例如：我最近做过一次首页改版，当时核心问题是新用户转化持续下降……"
+            />
+
+            <div className="composer-side-actions">
+              <button
+                className={`icon-button ${isRecording ? "is-recording" : ""}`}
+                onClick={() => void handleVoiceToggle()}
+                disabled={isAnalyzing}
+                aria-label={isRecording ? "停止录音" : "开始语音输入"}
+                title={isRecording ? "停止录音" : "开始语音输入"}
+              >
+                {isRecording ? "■" : <MicrophoneIcon />}
+              </button>
+              <button
+                className="icon-button icon-button-send"
+                onClick={() => void handleInitialSubmit()}
+                disabled={isAnalyzing || isRecording || !draft.trim()}
+                aria-label="发送"
+                title="发送"
+              >
+                <SendIcon />
+              </button>
             </div>
           </div>
 
-          <textarea
-            ref={draftRef}
-            className="composer-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="不用写得很完美，就写你现在会怎么说。比如：我最近做过一次首页改版，当时转化率一直在掉……"
-          />
-
           <div className="composer-footer">
-            <span>已输入 {draft.trim().length} 字</span>
-            <span>每次补充后，都会生成新的一轮评分，不会覆盖前一轮</span>
+            <span>
+              {isRecording ? `语音输入中 ${formatSeconds(recordingSeconds)} / 05:00` : draft.trim().length > 0 ? `已输入 ${draft.trim().length} 字` : "Enter 发送，Shift + Enter 换行"}
+            </span>
+            <span>{voiceStatus || "语音最长 5 分钟"}</span>
           </div>
 
-          <div className="composer-actions">
-            <button className="primary-button" onClick={() => void handleInitialSubmit()} disabled={isAnalyzing}>
-              {isAnalyzing ? "正在帮你整理这段回答…" : conversation.length ? "重新开始这一题" : "帮我顺一顺这段回答"}
-            </button>
-            <button className="secondary-button" onClick={handleTryExample} disabled={isAnalyzing}>
-              不知道怎么写？先试试这个
-            </button>
-          </div>
+          {isRecording ? (
+            <div className="voice-status-row" aria-live="polite">
+              <div className="voice-status-meta">
+                <span className="voice-status-dot" />
+                <span>录音中</span>
+                <strong>{formatSeconds(recordingSeconds)}</strong>
+              </div>
+              <VoiceWave level={audioLevel} />
+            </div>
+          ) : null}
 
           {isAnalyzing ? <ThinkingIndicator label="正在整理你的回答" /> : null}
+
+          {!conversation.length && !draft && !isRecording ? (
+            <button className="composer-link-button" onClick={handleTryExample} disabled={isAnalyzing}>
+              试试示例
+            </button>
+          ) : null}
 
           {error ? <p className="error-banner">{error}</p> : null}
         </div>

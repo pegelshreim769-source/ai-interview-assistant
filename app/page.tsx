@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PracticeLayout } from "./components/practice-layout";
 
 type SpeechRecognitionResultLike = {
   isFinal: boolean;
@@ -792,6 +793,19 @@ export default function HomePage() {
     void handleInitialSubmit(starterAnswer);
   }
 
+  function handleNewRound() {
+    if (isRecording) stopVoiceInput();
+    setDraft("");
+    setConversation([]);
+    setBaseAnswer("");
+    setSupplements([]);
+    setPendingSupplementFor(null);
+    setSupplementDraft("");
+    setIsAnalyzing(false);
+    setVoiceStatus("");
+    setError("");
+  }
+
   function handleDraftKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -800,110 +814,105 @@ export default function HomePage() {
   }
 
   return (
-    <main className="chat-shell">
-      <section className="chat-header">
-        <p className="brand-name">INTERVIEW LAB</p>
-        <p className="header-subtitle">先写你现在会怎么说。我会按真实面试的节奏继续追问，再陪你把它讲顺。</p>
-      </section>
+    <PracticeLayout mode="text" onTryExample={handleTryExample} onNewRound={handleNewRound} shortcutsDisabled={isAnalyzing}>
+      <div className="chat-shell">
+        <section className="chat-header">
+          <p className="header-subtitle">先写你现在会怎么说。我会按真实面试的节奏继续追问，再陪你把它讲顺。</p>
+        </section>
 
-      <section className="chat-thread">
-        {conversation.length === 0 ? (
-          <div className="empty-thread">
-            <div className="assistant-avatar">AI</div>
-            <div className="assistant-bubble empty-bubble">
-              <p className="empty-state-title">先发一版你真实会说出口的回答。</p>
-              <p className="empty-state-copy">如果信息不够，我会继续追问；你补上后，我们再生成新一轮反馈。</p>
+        <section className="chat-thread">
+          {conversation.length === 0 ? (
+            <div className="empty-thread">
+              <div className="assistant-avatar">AI</div>
+              <div className="assistant-bubble empty-bubble">
+                <p className="empty-state-title">先发一版你真实会说出口的回答。</p>
+                <p className="empty-state-copy">如果信息不够，我会继续追问；你补上后，我们再生成新一轮反馈。</p>
+              </div>
             </div>
-          </div>
-        ) : (
-          conversation.map((turn) =>
-            turn.role === "user" ? (
-              <div className="chat-row user-row" key={turn.id}>
-                <div className="user-bubble">
-                  <p className="user-label">{turn.kind === "initial" ? "你现在会怎么回答" : "你补充的真实信息"}</p>
-                  <p className="user-text">{turn.content}</p>
+          ) : (
+            conversation.map((turn) =>
+              turn.role === "user" ? (
+                <div className="chat-row user-row" key={turn.id}>
+                  <div className="user-bubble">
+                    <p className="user-label">{turn.kind === "initial" ? "你现在会怎么回答" : "你补充的真实信息"}</p>
+                    <p className="user-text">{turn.content}</p>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <AssistantBubble
-                key={turn.id}
-                turn={turn}
-                supplementDraft={pendingSupplementFor === turn.id ? supplementDraft : ""}
-                onSupplementChange={(value) => {
-                  setPendingSupplementFor(turn.id);
-                  setSupplementDraft(value);
-                }}
-                onContinue={() => void handleSupplementSubmit(turn.id)}
-                disabled={isAnalyzing}
-              />
+              ) : (
+                <AssistantBubble
+                  key={turn.id}
+                  turn={turn}
+                  supplementDraft={pendingSupplementFor === turn.id ? supplementDraft : ""}
+                  onSupplementChange={(value) => {
+                    setPendingSupplementFor(turn.id);
+                    setSupplementDraft(value);
+                  }}
+                  onContinue={() => void handleSupplementSubmit(turn.id)}
+                  disabled={isAnalyzing}
+                />
+              )
             )
-          )
-        )}
-      </section>
+          )}
+        </section>
 
-      <section className="composer-dock">
-        <div className="composer-card">
-          <div className="composer-input-shell">
-            <textarea
-              ref={draftRef}
-              className="composer-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleDraftKeyDown}
-              placeholder="例如：我最近做过一次首页改版，当时核心问题是新用户转化持续下降……"
-            />
+        <section className="composer-dock">
+          <div className="composer-card">
+            <div className="composer-input-shell">
+              <textarea
+                ref={draftRef}
+                className="composer-input"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleDraftKeyDown}
+                placeholder="例如：我最近做过一次首页改版，当时核心问题是新用户转化持续下降……"
+              />
 
-            <div className="composer-side-actions">
-              <button
-                className={`icon-button ${isRecording ? "is-recording" : ""}`}
-                onClick={() => void handleVoiceToggle()}
-                disabled={isAnalyzing}
-                aria-label={isRecording ? "停止录音" : "开始语音输入"}
-                title={isRecording ? "停止录音" : "开始语音输入"}
-              >
-                {isRecording ? "■" : <MicrophoneIcon />}
-              </button>
-              <button
-                className="icon-button icon-button-send"
-                onClick={() => void handleInitialSubmit()}
-                disabled={isAnalyzing || isRecording || !draft.trim()}
-                aria-label="发送"
-                title="发送"
-              >
-                <SendIcon />
-              </button>
-            </div>
-          </div>
-
-          <div className="composer-footer">
-            <span>
-              {isRecording ? `语音输入中 ${formatSeconds(recordingSeconds)} / 05:00` : draft.trim().length > 0 ? `已输入 ${draft.trim().length} 字` : "Enter 发送，Shift + Enter 换行"}
-            </span>
-            <span>{voiceStatus || "语音最长 5 分钟"}</span>
-          </div>
-
-          {isRecording ? (
-            <div className="voice-status-row" aria-live="polite">
-              <div className="voice-status-meta">
-                <span className="voice-status-dot" />
-                <span>录音中</span>
-                <strong>{formatSeconds(recordingSeconds)}</strong>
+              <div className="composer-side-actions">
+                <button
+                  className={`icon-button ${isRecording ? "is-recording" : ""}`}
+                  onClick={() => void handleVoiceToggle()}
+                  disabled={isAnalyzing}
+                  aria-label={isRecording ? "停止录音" : "开始语音输入"}
+                  title={isRecording ? "停止录音" : "开始语音输入"}
+                >
+                  {isRecording ? "■" : <MicrophoneIcon />}
+                </button>
+                <button
+                  className="icon-button icon-button-send"
+                  onClick={() => void handleInitialSubmit()}
+                  disabled={isAnalyzing || isRecording || !draft.trim()}
+                  aria-label="发送"
+                  title="发送"
+                >
+                  <SendIcon />
+                </button>
               </div>
-              <VoiceWave level={audioLevel} />
             </div>
-          ) : null}
 
-          {isAnalyzing ? <ThinkingIndicator label="正在整理你的回答" /> : null}
+            <div className="composer-footer">
+              <span>
+                {isRecording ? `语音输入中 ${formatSeconds(recordingSeconds)} / 05:00` : draft.trim().length > 0 ? `已输入 ${draft.trim().length} 字` : "Enter 发送，Shift + Enter 换行"}
+              </span>
+              <span>{voiceStatus || "语音最长 5 分钟"}</span>
+            </div>
 
-          {!conversation.length && !draft && !isRecording ? (
-            <button className="composer-link-button" onClick={handleTryExample} disabled={isAnalyzing}>
-              试试示例
-            </button>
-          ) : null}
+            {isRecording ? (
+              <div className="voice-status-row" aria-live="polite">
+                <div className="voice-status-meta">
+                  <span className="voice-status-dot" />
+                  <span>录音中</span>
+                  <strong>{formatSeconds(recordingSeconds)}</strong>
+                </div>
+                <VoiceWave level={audioLevel} />
+              </div>
+            ) : null}
 
-          {error ? <p className="error-banner">{error}</p> : null}
-        </div>
-      </section>
-    </main>
+            {isAnalyzing ? <ThinkingIndicator label="正在整理你的回答" /> : null}
+
+            {error ? <p className="error-banner">{error}</p> : null}
+          </div>
+        </section>
+      </div>
+    </PracticeLayout>
   );
 }

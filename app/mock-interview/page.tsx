@@ -832,7 +832,9 @@ export default function MockInterviewPage() {
         id: item.session_id,
         title: item.title || "产品经理模拟面试",
         updatedAt: item.updated_at,
-        status: item.status
+        status: item.status,
+        modeLabel: "模拟面试",
+        summary: item.current_question || "按真实面试节奏继续追问"
       }))}
       onSelectHistory={handleSelectHistory}
     >

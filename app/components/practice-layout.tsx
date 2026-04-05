@@ -3,12 +3,14 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 
-type PracticeMode = "text" | "mock";
+type PracticeMode = "text" | "mock" | "custom";
 type SidebarHistoryItem = {
   id: string;
   title: string;
   updatedAt: string;
   status: "in_progress" | "completed" | "interrupted";
+  modeLabel?: string;
+  summary?: string;
 };
 
 type PracticeLayoutProps = {
@@ -96,6 +98,10 @@ export function PracticeLayout({
               <span className="sidebar-nav-icon">模</span>
               {!collapsed ? <span>模拟面试</span> : null}
             </Link>
+            <Link href="/custom-interview" className={`sidebar-nav-item ${mode === "custom" ? "is-active" : ""}`} title="定制面试">
+              <span className="sidebar-nav-icon">定</span>
+              {!collapsed ? <span>定制面试</span> : null}
+            </Link>
           </nav>
         </div>
 
@@ -147,10 +153,14 @@ export function PracticeLayout({
                 <button key={item.id} type="button" className={`sidebar-history-item is-${item.status}`} onClick={() => onSelectHistory?.(item.id)}>
                   <div className="sidebar-history-main">
                     <div className="sidebar-history-topline">
-                      <span className={`sidebar-history-status is-${item.status}`}>{statusLabel(item.status)}</span>
+                      <span className="sidebar-history-mode">{item.modeLabel || "练习"}</span>
                       <span className="sidebar-history-time">{formatTime(item.updatedAt)}</span>
                     </div>
+                    <div className="sidebar-history-topline">
+                      <span className={`sidebar-history-status is-${item.status}`}>{statusLabel(item.status)}</span>
+                    </div>
                     <p className="sidebar-history-title">{item.title}</p>
+                    {item.summary ? <p className="sidebar-history-summary">{item.summary}</p> : null}
                   </div>
                   <span className="sidebar-history-link">{item.status === "in_progress" ? "恢复" : "查看"}</span>
                 </button>

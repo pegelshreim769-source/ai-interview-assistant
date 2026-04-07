@@ -132,6 +132,7 @@ type ProviderResponse = {
   }>;
   error?: {
     message?: string;
+    type?: string;
   };
 };
 
@@ -139,6 +140,95 @@ function stringifyConversation(history: MockTurn[]) {
   return history
     .map((turn, index) => `${index + 1}. ${turn.role === "assistant" ? "面试官" : "候选人"}（${turn.kind}）：${turn.content}`)
     .join("\n");
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeProviderError(payload: ProviderResponse | null, fallbackText = "") {
+  const message = payload?.error?.message?.trim() || fallbackText.trim();
+  const type = payload?.error?.type?.trim() || "";
+  const normalized = `${type} ${message}`.toLowerCase();
+
+  if (normalized.includes("engine_overloaded") || normalized.includes("overloaded") || normalized.includes("rate limit")) {
+    return "当前面试官服务有点忙，我已经收到你的回答。请直接再点一次提交，我会继续这一轮。";
+  }
+
+  return message || "模拟面试服务暂时不可用，请稍后再试。";
+}
+
+async function requestInterviewTurn(baseUrl: string, apiKey: string, model: string, prompt: string) {
+  let lastStatus = 500;
+  let lastPayload: ProviderResponse | null = null;
+  let lastErrorText = "";
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const providerResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "system",
+            content: "你是一位真实、克制、专业的产品经理面试官。你不能补编候选人没有提供的事实。你必须只输出合法 JSON。"
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: INTERVIEW_SCHEMA
+        }
+      })
+    });
+
+    lastStatus = providerResponse.status || 500;
+    const responseText = await providerResponse.text();
+    lastErrorText = responseText;
+
+    let payload: ProviderResponse | null = null;
+    try {
+      payload = JSON.parse(responseText) as ProviderResponse;
+    } catch {
+      payload = null;
+    }
+
+    lastPayload = payload;
+
+    if (providerResponse.ok) {
+      return {
+        ok: true as const,
+        payload
+      };
+    }
+
+    const normalizedError = normalizeProviderError(payload, responseText);
+    const isRetryable = normalizedError.includes("当前面试官服务有点忙");
+
+    if (isRetryable && attempt === 0) {
+      await wait(800);
+      continue;
+    }
+
+    return {
+      ok: false as const,
+      status: lastStatus,
+      error: normalizedError
+    };
+  }
+
+  return {
+    ok: false as const,
+    status: lastStatus,
+    error: normalizeProviderError(lastPayload, lastErrorText)
+  };
 }
 
 export async function POST(request: Request) {
@@ -179,37 +269,18 @@ export async function POST(request: Request) {
       .replace("{{followup_count}}", String(followupCount))
       .replace("{{conversation}}", stringifyConversation(history));
 
-    const providerResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: "system",
-            content: "你是一位真实、克制、专业的产品经理面试官。你不能补编候选人没有提供的事实。你必须只输出合法 JSON。"
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: INTERVIEW_SCHEMA
-        }
-      })
-    });
+    const providerResult = await requestInterviewTurn(baseUrl, apiKey, model, prompt);
 
-    if (!providerResponse.ok) {
-      const errorText = await providerResponse.text();
-      return NextResponse.json({ error: errorText || "模拟面试生成失败，请稍后再试。" }, { status: providerResponse.status || 500 });
+    if (!providerResult.ok) {
+      return NextResponse.json({ error: providerResult.error }, { status: providerResult.status || 500 });
     }
 
-    const payload = (await providerResponse.json()) as ProviderResponse;
+    const payload = providerResult.payload;
+
+    if (!payload) {
+      return NextResponse.json({ error: "模型没有返回可用内容，请稍后再试。" }, { status: 500 });
+    }
+
     const content = payload.choices?.[0]?.message?.content;
 
     if (!content) {

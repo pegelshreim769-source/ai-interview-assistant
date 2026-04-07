@@ -16,45 +16,16 @@ import {
   writeRecognitionLanguage
 } from "../lib/mock-interview-storage";
 
-type SpeechRecognitionResultLike = {
-  isFinal: boolean;
-  0: {
-    transcript: string;
-  };
-};
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number;
-  results: ArrayLike<SpeechRecognitionResultLike>;
-};
-
-type SpeechRecognitionErrorEventLike = {
-  error: string;
-};
-
-type SpeechRecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onspeechstart?: (() => void) | null;
-  onspeechend?: (() => void) | null;
-  onsoundstart?: (() => void) | null;
-  onsoundend?: (() => void) | null;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
 type MockInterviewResponse = {
   mode: "ask_question" | "ask_followup" | "round_summary";
   interviewer_message: string;
   short_feedback: string;
   summary: RoundSummary | null;
+};
+
+type TranscribeResponse = {
+  text: string;
+  error?: string;
 };
 
 const WAITING_FOR_ANSWER_MESSAGE = "面试官已提问完毕，现在请开始回答。";
@@ -75,8 +46,78 @@ function formatSeconds(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
-function mergeVoiceDraft(finalText: string, interimText = "") {
-  return [finalText.trim(), interimText.trim()].filter(Boolean).join("");
+function mergePcmChunks(chunks: Float32Array[]) {
+  const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+
+  chunks.forEach((chunk) => {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  });
+
+  return merged;
+}
+
+function downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number) {
+  if (outputSampleRate >= inputSampleRate) return buffer;
+
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0;
+    let count = 0;
+
+    for (let index = offsetBuffer; index < nextOffsetBuffer && index < buffer.length; index += 1) {
+      accum += buffer[index];
+      count += 1;
+    }
+
+    result[offsetResult] = count ? accum / count : 0;
+    offsetResult += 1;
+    offsetBuffer = nextOffsetBuffer;
+  }
+
+  return result;
+}
+
+function writeString(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function encodeWav(samples: Float32Array, sampleRate: number) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    offset += 2;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
 }
 
 function MicrophoneIcon() {
@@ -124,6 +165,16 @@ function VoiceWave({ level }: { level: number }) {
   );
 }
 
+function ThinkingPulse() {
+  return (
+    <div className="mock-thinking-status" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+}
+
 function statusLabel(state: InterviewState) {
   switch (state) {
     case "idle":
@@ -164,15 +215,17 @@ export default function MockInterviewPage() {
   const [historyItems, setHistoryItems] = useState<MockInterviewSession[]>([]);
   const [error, setError] = useState("");
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const processorNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const inputSampleRateRef = useRef(44100);
+  const isRecordingRef = useRef(false);
   const recordingIntervalRef = useRef<number | null>(null);
   const recordingTimeoutRef = useRef<number | null>(null);
-  const shouldKeepRecordingRef = useRef(false);
-  const manualStopRef = useRef(false);
-  const recognitionRestartTimerRef = useRef<number | null>(null);
-  const recognitionEverStartedRef = useRef(false);
-  const voiceFinalTextRef = useRef("");
-  const voiceInterimTextRef = useRef("");
+  const stopReasonRef = useRef<"manual" | "timeout" | "cancel" | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
   const lastUserAnswer = useMemo(() => [...messages].reverse().find((message) => message.role === "user" && message.kind === "answer")?.content ?? "", [messages]);
 
@@ -228,13 +281,10 @@ export default function MockInterviewPage() {
 
   useEffect(() => {
     return () => {
-      if (sessionId && messages.length) {
-        persistSession(interviewState === "round_summary" ? "completed" : "interrupted");
-      }
       stopVoiceInput("cancel");
       stopQuestionPlayback();
     };
-  }, [sessionId, messages, interviewState, currentQuestion, roundSummary, followupCount, voiceStatus, liveTranscript, recordingSeconds, recognitionLanguage]);
+  }, []);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -266,31 +316,37 @@ export default function MockInterviewPage() {
     }
   }
 
-  function clearRecognitionRestartTimer() {
-    if (recognitionRestartTimerRef.current) {
-      window.clearTimeout(recognitionRestartTimerRef.current);
-      recognitionRestartTimerRef.current = null;
-    }
-  }
+  function cleanupAudioCapture() {
+    isRecordingRef.current = false;
 
-  function teardownRecognition() {
-    if (recognitionRef.current) {
-      recognitionRef.current.onspeechstart = null;
-      recognitionRef.current.onspeechend = null;
-      recognitionRef.current.onsoundstart = null;
-      recognitionRef.current.onsoundend = null;
-      recognitionRef.current.onresult = null;
-      recognitionRef.current.onerror = null;
-      recognitionRef.current.onend = null;
-      recognitionRef.current = null;
+    if (processorNodeRef.current) {
+      processorNodeRef.current.disconnect();
+      processorNodeRef.current.onaudioprocess = null;
+      processorNodeRef.current = null;
     }
+
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
+    }
+
+    if (audioContextRef.current) {
+      void audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    pcmChunksRef.current = [];
   }
 
   function finalizeVoiceRecording() {
-    shouldKeepRecordingRef.current = false;
     clearRecordingTimers();
-    clearRecognitionRestartTimer();
-    teardownRecognition();
+    cleanupAudioCapture();
+    recordingStartedAtRef.current = null;
   }
 
   function cancelPendingAnswer() {
@@ -300,144 +356,143 @@ export default function MockInterviewPage() {
 
   function moveToReviewAnswer(transcript: string, message = REVIEW_ANSWER_MESSAGE) {
     setTranscribedAnswer(transcript);
-    setLiveTranscript(transcript);
+    setLiveTranscript("");
     setInterviewState("reviewing_answer");
     setVoiceStatus(message);
   }
 
-  function completeLocalRecognition() {
-    const transcript = mergeVoiceDraft(voiceFinalTextRef.current, voiceInterimTextRef.current).trim();
+  async function transcribeAudio(audioBlob: Blob) {
+    const extension = audioBlob.type.includes("mp4") ? "m4a" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
+    const file = new File([audioBlob], `mock-answer.${extension}`, { type: audioBlob.type || "audio/webm" });
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("language", recognitionLanguage);
+
+    const response = await fetch("/api/mock-interview/transcribe", {
+      method: "POST",
+      body: formData
+    });
+    const payload = (await response.json()) as TranscribeResponse;
+
+    if (!response.ok) {
+      throw new Error(payload.error || "语音转写失败，请稍后再试。");
+    }
+
+    return payload.text?.trim() || "";
+  }
+
+  async function handleRecordedAudio(audioBlob: Blob) {
     finalizeVoiceRecording();
 
-    if (transcript) {
-      moveToReviewAnswer(transcript);
+    if (!audioBlob.size) {
+      moveToReviewAnswer("", REVIEW_ANSWER_FALLBACK_MESSAGE);
+      setError("这次没有录到有效音频，你可以重新录音，或直接手动输入回答。");
       return;
     }
 
-    moveToReviewAnswer("", REVIEW_ANSWER_FALLBACK_MESSAGE);
-    setError("浏览器这次没有稳定识别出文字，你可以直接手动补充后提交。");
+    try {
+      const transcript = await transcribeAudio(audioBlob);
+
+      if (transcript) {
+        moveToReviewAnswer(transcript);
+        return;
+      }
+
+      moveToReviewAnswer("", REVIEW_ANSWER_FALLBACK_MESSAGE);
+      setError("这次没有稳定识别出文字，你可以直接手动补充后提交。");
+    } catch (transcribeError) {
+      moveToReviewAnswer("", REVIEW_ANSWER_FALLBACK_MESSAGE);
+      setError(transcribeError instanceof Error ? transcribeError.message : "语音转写失败，请稍后再试。");
+    }
   }
 
-  async function startRecognitionSession() {
-    const voiceWindow = window as Window & {
-      SpeechRecognition?: SpeechRecognitionConstructor;
-      webkitSpeechRecognition?: SpeechRecognitionConstructor;
-    };
-    const Recognition = voiceWindow.SpeechRecognition || voiceWindow.webkitSpeechRecognition;
-
-    if (!Recognition) {
-      moveToReviewAnswer("", "当前浏览器不支持自动语音转写，请直接输入回答内容后提交。");
-      setError("当前浏览器不支持本地语音转写，请改用 Chrome，或直接手动输入回答。");
+  async function startRecordingSession() {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      moveToReviewAnswer("", "当前浏览器不支持录音，请直接手动输入回答。");
+      setError("当前浏览器不支持录音，请改用 Chrome，或直接手动输入回答。");
       return false;
     }
 
-    const recognition = new Recognition() as SpeechRecognitionLike;
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    if (recognitionLanguage === "zh-CN" || recognitionLanguage === "zh-TW") {
-      recognition.lang = recognitionLanguage;
-    }
-
-    recognition.onspeechstart = () => {
-      recognitionEverStartedRef.current = true;
-      setVoiceStatus("正在录音，我会继续听你把这段话说完。");
-    };
-
-    recognition.onspeechend = () => {
-      if (!shouldKeepRecordingRef.current) return;
-      setVoiceStatus("听到你在停顿，我会继续等你把这一段说完。");
-    };
-
-    recognition.onsoundstart = () => {
-      recognitionEverStartedRef.current = true;
-      setVoiceStatus("已经开始收音，你可以继续说。");
-    };
-
-    recognition.onsoundend = () => {
-      if (!shouldKeepRecordingRef.current) return;
-      setVoiceStatus("收音还在继续，我会等你把这一段说完。");
-    };
-
-    recognition.onresult = (event) => {
-      let interimText = "";
-      recognitionEverStartedRef.current = true;
-
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const transcript = result[0]?.transcript ?? "";
-
-        if (result.isFinal) {
-          voiceFinalTextRef.current = `${voiceFinalTextRef.current}${transcript}`;
-        } else {
-          interimText += transcript;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
         }
+      });
+      const audioWindow = window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext };
+      const AudioContextConstructor = audioWindow.AudioContext || audioWindow.webkitAudioContext;
+
+      if (!AudioContextConstructor) {
+        throw new Error("当前浏览器不支持音频采集。");
       }
 
-      voiceInterimTextRef.current = interimText;
-      setLiveTranscript(mergeVoiceDraft(voiceFinalTextRef.current, interimText));
-    };
+      const audioContext = new AudioContextConstructor();
+      await audioContext.resume();
+      const sourceNode = audioContext.createMediaStreamSource(stream);
+      const processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
-    recognition.onerror = (event) => {
-      if (shouldKeepRecordingRef.current && !manualStopRef.current && (event.error === "no-speech" || event.error === "aborted" || event.error === "network")) {
-        setVoiceStatus(recognitionEverStartedRef.current ? "识别短暂中断了，我正在继续监听，请接着说。" : "我正在继续等待你开口，请直接开始回答。");
-        return;
-      }
+      inputSampleRateRef.current = audioContext.sampleRate;
+      mediaStreamRef.current = stream;
+      audioContextRef.current = audioContext;
+      sourceNodeRef.current = sourceNode;
+      processorNodeRef.current = processorNode;
+      pcmChunksRef.current = [];
+      stopReasonRef.current = null;
+      isRecordingRef.current = true;
 
+      processorNode.onaudioprocess = (event) => {
+        if (!isRecordingRef.current) return;
+        const channel = event.inputBuffer.getChannelData(0);
+        if (channel.length) {
+          pcmChunksRef.current.push(new Float32Array(channel));
+        }
+      };
+
+      sourceNode.connect(processorNode);
+      processorNode.connect(audioContext.destination);
+      return true;
+    } catch (recordingError) {
       const message =
-        event.error === "not-allowed"
+        recordingError instanceof DOMException && recordingError.name === "NotAllowedError"
           ? "没有拿到麦克风权限，请允许浏览器访问麦克风。"
-          : event.error === "audio-capture"
-            ? "没有检测到可用麦克风，请检查系统输入设备后再试。"
-            : "本地语音识别出了点问题，你可以重新录音，或直接手动编辑回答。";
+          : recordingError instanceof Error && recordingError.message
+            ? recordingError.message
+            : "没有检测到可用麦克风，请检查系统输入设备后再试。";
 
       setError(message);
-      shouldKeepRecordingRef.current = false;
-      manualStopRef.current = true;
-      try {
-        recognition.stop();
-      } catch {
-        recognition.abort();
-      }
-    };
-
-    recognition.onend = () => {
-      if (shouldKeepRecordingRef.current && !manualStopRef.current) {
-        clearRecognitionRestartTimer();
-        recognitionRestartTimerRef.current = window.setTimeout(() => {
-          if (!shouldKeepRecordingRef.current) return;
-          void startRecognitionSession();
-        }, 250);
-        return;
-      }
-
-      manualStopRef.current = false;
-      completeLocalRecognition();
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-    return true;
+      moveToWaitingForAnswer(WAITING_FOR_ANSWER_MESSAGE);
+      finalizeVoiceRecording();
+      return false;
+    }
   }
 
   function stopVoiceInput(stopReason: "manual" | "timeout" | "cancel" = "manual") {
-    shouldKeepRecordingRef.current = false;
-    manualStopRef.current = stopReason !== "cancel";
     clearRecordingTimers();
-    clearRecognitionRestartTimer();
+    stopReasonRef.current = stopReason;
 
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        recognitionRef.current.abort();
+    if (isRecordingRef.current) {
+      isRecordingRef.current = false;
+      const mergedPcm = mergePcmChunks(pcmChunksRef.current);
+      const targetSampleRate = 16000;
+      const output = downsampleBuffer(mergedPcm, inputSampleRateRef.current, targetSampleRate);
+      const wavBlob = encodeWav(output, targetSampleRate);
+
+      if (stopReason === "cancel") {
+        finalizeVoiceRecording();
+        return;
       }
+
+      void handleRecordedAudio(wavBlob);
       return;
     }
 
     if (stopReason === "cancel") {
       finalizeVoiceRecording();
     } else {
-      completeLocalRecognition();
+      moveToReviewAnswer("", REVIEW_ANSWER_FALLBACK_MESSAGE);
     }
   }
 
@@ -522,6 +577,7 @@ export default function MockInterviewPage() {
     setMessages(nextHistory);
     setInterviewState("ai_thinking");
     setVoiceStatus("正在根据这一轮回答判断要继续追问，还是先帮你收住这一轮。");
+    setTranscribedAnswer(transcript);
     setError("");
 
     try {
@@ -597,8 +653,9 @@ export default function MockInterviewPage() {
       setVoiceStatus("这一轮先收到这里，我已经帮你整理出一个阶段小结。");
       persistSession("completed");
     } catch (requestError) {
-      setInterviewState(answerReadyState());
-      setVoiceStatus(currentQuestion ? WAITING_FOR_ANSWER_MESSAGE : "");
+      setMessages((current) => current.filter((message) => message.id !== nextUserMessage.id));
+      setInterviewState("reviewing_answer");
+      setVoiceStatus("这段回答我已经保留了。服务恢复后，你可以直接重新提交。");
       setError(requestError instanceof Error ? requestError.message : "这一轮处理失败，请稍后再试。");
     }
   }
@@ -626,24 +683,23 @@ export default function MockInterviewPage() {
     );
     setRecordingSeconds(0);
     setInterviewState("user_recording");
-    shouldKeepRecordingRef.current = true;
-    manualStopRef.current = false;
-    recognitionEverStartedRef.current = false;
-    voiceFinalTextRef.current = "";
-    voiceInterimTextRef.current = "";
+    setLiveTranscript("");
+    recordingStartedAtRef.current = Date.now();
 
     recordingIntervalRef.current = window.setInterval(() => {
-      setRecordingSeconds((current) => {
-        if (current >= 299) {
-          setInterviewState("transcribing");
-          setVoiceStatus("已到 5 分钟，正在整理这段回答…");
-          stopVoiceInput("timeout");
-          return 300;
-        }
+      const startedAt = recordingStartedAtRef.current;
+      const elapsedSeconds = startedAt ? (Date.now() - startedAt) / 1000 : 0;
 
-        return current + 1;
-      });
-    }, 1000);
+      if (elapsedSeconds >= 300) {
+        setRecordingSeconds(300);
+        setInterviewState("transcribing");
+        setVoiceStatus("已到 5 分钟，正在整理这段回答…");
+        stopVoiceInput("timeout");
+        return;
+      }
+
+      setRecordingSeconds(elapsedSeconds);
+    }, 250);
 
     recordingTimeoutRef.current = window.setTimeout(() => {
       setInterviewState("transcribing");
@@ -651,7 +707,7 @@ export default function MockInterviewPage() {
       stopVoiceInput("timeout");
     }, 300000);
 
-    const started = await startRecognitionSession();
+    const started = await startRecordingSession();
 
     if (!started) {
       clearRecordingTimers();
@@ -729,7 +785,7 @@ export default function MockInterviewPage() {
       persistSession("completed");
     } catch (requestError) {
       setInterviewState(answerReadyState());
-      setVoiceStatus(currentQuestion ? WAITING_FOR_ANSWER_MESSAGE : "");
+      setVoiceStatus(currentQuestion ? "当前服务有点忙，稍后可以继续这一轮，或再试一次结束本轮。" : "");
       setError(requestError instanceof Error ? requestError.message : "暂时没法完成这一轮小结，请稍后再试。");
     }
   }
@@ -750,9 +806,9 @@ export default function MockInterviewPage() {
 
   function restoreSession(session: MockInterviewSession) {
     setSessionId(session.session_id);
-    setMessages(session.messages);
-    setCurrentQuestion(session.current_question);
-    setRoundSummary(session.summary);
+    setMessages(Array.isArray(session.messages) ? session.messages : []);
+    setCurrentQuestion(session.current_question || "");
+    setRoundSummary(session.summary || null);
     setInterviewState(
       session.interview_state === "ai_asking" ||
         session.interview_state === "ai_followup" ||
@@ -762,7 +818,7 @@ export default function MockInterviewPage() {
         ? "waiting_for_answer"
         : session.interview_state
     );
-    setFollowupCount(session.followup_count);
+    setFollowupCount(typeof session.followup_count === "number" ? session.followup_count : 0);
     setVoiceStatus(
       session.current_question && session.interview_state !== "round_summary"
         ? session.interview_state === "ai_thinking"
@@ -770,9 +826,9 @@ export default function MockInterviewPage() {
           : WAITING_FOR_ANSWER_MESSAGE
         : session.voice_status || "已恢复到上一轮练习。"
     );
-    setLiveTranscript(session.live_transcript);
+    setLiveTranscript(session.live_transcript || "");
     setTranscribedAnswer("");
-    setRecordingSeconds(session.duration_seconds);
+    setRecordingSeconds(typeof session.duration_seconds === "number" ? session.duration_seconds : 0);
     setRecognitionLanguage(session.recognition_language || "zh-CN");
     setError("");
     stopQuestionPlayback();
@@ -795,7 +851,10 @@ export default function MockInterviewPage() {
   }
 
   const canToggleRecording = interviewState === "waiting_for_answer" || interviewState === "user_recording";
-  const waveformLevel = interviewState === "user_recording" ? 0.48 + ((recordingSeconds % 4) * 0.08) / 4 : 0.08;
+  const isVoiceTimingVisible = interviewState === "user_recording" || interviewState === "transcribing";
+  const isThinkingState = interviewState === "ai_thinking";
+  const waveformLevel = interviewState === "user_recording" ? 0.48 + ((recordingSeconds % 4) * 0.08) / 4 : interviewState === "transcribing" ? 0.28 : 0.08;
+  const recordingProgress = Math.min(recordingSeconds / 300, 1);
   const recordButtonLabel =
     interviewState === "user_recording"
       ? "结束录音"
@@ -852,7 +911,7 @@ export default function MockInterviewPage() {
               <option value="auto">自动</option>
             </select>
             <p>默认使用简体中文识别。如果总被识别成繁体，请切换到简体中文。</p>
-            <p>当前使用浏览器本地识别。</p>
+            <p>当前使用 DashScope 语音转写。</p>
           </div>
         </section>
 
@@ -956,12 +1015,37 @@ export default function MockInterviewPage() {
             </div>
 
             <div className="mock-control-meta">
-              <div className="voice-status-meta">
-                <span className="voice-status-dot" />
-                <span>{controlMetaLabel}</span>
-                <strong>{formatSeconds(recordingSeconds)}</strong>
-              </div>
-              <VoiceWave level={waveformLevel} />
+              {isVoiceTimingVisible ? (
+                <>
+                  <div className="voice-status-meta">
+                    <span className="voice-status-dot" />
+                    <span>{controlMetaLabel}</span>
+                    <strong>{formatSeconds(recordingSeconds)}</strong>
+                  </div>
+                  <div className="mock-progress-track" aria-hidden="true">
+                    <span
+                      className="mock-progress-fill"
+                      style={{ width: `${recordingProgress > 0 ? Math.max(recordingProgress * 100, 4) : 0}%` }}
+                    />
+                  </div>
+                  <VoiceWave level={waveformLevel} />
+                </>
+              ) : isThinkingState ? (
+                <>
+                  <div className="voice-status-meta is-thinking">
+                    <span>{controlMetaLabel}</span>
+                  </div>
+                  <ThinkingPulse />
+                </>
+              ) : (
+                <>
+                  <div className="voice-status-meta">
+                    <span className="voice-status-dot" />
+                    <span>{controlMetaLabel}</span>
+                  </div>
+                  <VoiceWave level={waveformLevel} />
+                </>
+              )}
             </div>
 
             <p className="mock-note">仅基于你真实回答继续追问和整理表达，不会补编项目经历、数据或结果。</p>

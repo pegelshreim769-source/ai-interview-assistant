@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PracticeLayout } from "../components/practice-layout";
+import { WorkflowSteps } from "../components/workflow-steps";
 import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
 import {
   readMockSessions,
@@ -27,6 +28,8 @@ type TranscribeResponse = {
   text: string;
   error?: string;
 };
+
+type WorkflowStatus = "complete" | "current" | "upcoming";
 
 const WAITING_FOR_ANSWER_MESSAGE = "面试官已提问完毕，现在请开始回答。";
 const REVIEW_ANSWER_MESSAGE = "语音已经转成文字。确认无误后提交，或重新录音。";
@@ -198,6 +201,31 @@ function statusLabel(state: InterviewState) {
     default:
       return "练习中";
   }
+}
+
+function focusTitle(state: InterviewState) {
+  switch (state) {
+    case "waiting_for_answer":
+      return "直接回答当前问题";
+    case "user_recording":
+      return "完整说完这一段回答";
+    case "transcribing":
+      return "等转写完成后确认文字";
+    case "reviewing_answer":
+      return "确认转写，再提交这一题";
+    case "ai_thinking":
+      return "等面试官判断是否继续追问";
+    case "round_summary":
+      return "查看这一轮小结，决定是否再来一轮";
+    default:
+      return "先开始这一轮模拟面试";
+  }
+}
+
+function recognitionLabel(language: RecognitionLanguage) {
+  if (language === "zh-TW") return "繁中识别";
+  if (language === "auto") return "自动识别";
+  return "简中识别";
 }
 
 export default function MockInterviewPage() {
@@ -876,6 +904,8 @@ export default function MockInterviewPage() {
   const canToggleRecording = interviewState === "waiting_for_answer" || interviewState === "user_recording";
   const isVoiceTimingVisible = interviewState === "user_recording" || interviewState === "transcribing";
   const isThinkingState = interviewState === "ai_thinking";
+  const hasUserAnswer = messages.some((message) => message.role === "user" && message.kind === "answer");
+  const hasRoundStarted = interviewState !== "idle";
   const waveformLevel = interviewState === "user_recording" ? 0.48 + ((recordingSeconds % 4) * 0.08) / 4 : interviewState === "transcribing" ? 0.28 : 0.08;
   const recordingProgress = Math.min(recordingSeconds / 300, 1);
   const recordButtonLabel =
@@ -901,9 +931,49 @@ export default function MockInterviewPage() {
           ? "确认回答"
           : interviewState === "ai_thinking"
             ? "面试官判断中"
-            : interviewState === "waiting_for_answer"
+        : interviewState === "waiting_for_answer"
               ? "等待回答"
               : "待命中";
+  const answerStageStatus: WorkflowStatus =
+    interviewState === "waiting_for_answer" || interviewState === "user_recording" || interviewState === "transcribing" || interviewState === "reviewing_answer"
+      ? "current"
+      : hasUserAnswer || !!roundSummary
+        ? "complete"
+        : hasRoundStarted
+          ? "upcoming"
+          : "upcoming";
+  const followupStageStatus: WorkflowStatus = interviewState === "ai_thinking" ? "current" : followupCount > 0 || !!roundSummary ? "complete" : hasRoundStarted ? "upcoming" : "upcoming";
+  const summaryStageStatus: WorkflowStatus = interviewState === "round_summary" ? "current" : "upcoming";
+  const mockWorkflow = useMemo(
+    () => [
+      {
+        label: "进入一轮",
+        description: hasRoundStarted ? "这一轮已经开始" : "先开始面试，我会抛出第一题",
+        status: (hasRoundStarted ? "complete" : "current") as WorkflowStatus
+      },
+      {
+        label: "回答当前题",
+        description:
+          interviewState === "reviewing_answer"
+            ? "确认转写后再提交"
+            : answerStageStatus === "complete"
+              ? "这一题已经留下有效回答"
+              : "先像真实面试一样直接开口",
+        status: answerStageStatus
+      },
+      {
+        label: "继续追问",
+        description: followupStageStatus === "complete" ? "已经有过追问或判断结果" : "我会根据你的回答决定怎么继续问",
+        status: followupStageStatus
+      },
+      {
+        label: "本轮小结",
+        description: roundSummary ? "这一轮已经收成阶段小结" : "必要时可以提前结束并收束这一轮",
+        status: summaryStageStatus
+      }
+    ],
+    [answerStageStatus, followupStageStatus, hasRoundStarted, interviewState, roundSummary, summaryStageStatus]
+  );
 
   return (
     <PracticeLayout
@@ -921,157 +991,188 @@ export default function MockInterviewPage() {
       onSelectHistory={handleSelectHistory}
     >
       <div className="mock-shell">
-        <section className="mock-header">
-          <div className="mock-header-main">
-            <h1 className="mock-title">模拟面试模式</h1>
+        <section className="page-hero page-hero-mock">
+          <div className="page-hero-main">
+            <p className="section-tag">模拟面试</p>
+            <h1 className="page-title">像真实面试一样一问一答地讲</h1>
             <p className="mock-subtitle">我会像真实面试官一样逐轮提问，你用语音回答，我再继续追问。</p>
           </div>
-          <div className="mock-language-setting">
-            <label htmlFor="recognition-language">识别语言</label>
-            <select id="recognition-language" value={recognitionLanguage} onChange={handleLanguageChange}>
-              <option value="zh-CN">简体中文</option>
-              <option value="zh-TW">繁体中文</option>
-              <option value="auto">自动</option>
-            </select>
-            <p>默认使用简体中文识别。如果总被识别成繁体，请切换到简体中文。</p>
-            <p>当前使用 DashScope 语音转写。</p>
-          </div>
+          <aside className="page-hero-aside">
+            <p className="page-hero-note-title">这一轮重点</p>
+            <p className="page-hero-note">不是一次性写出标准答案，而是练你在追问压力下把背景、动作、判断和结果讲清楚。</p>
+          </aside>
+        </section>
+
+        <section className="mock-header">
+          <WorkflowSteps steps={mockWorkflow} />
         </section>
 
         <section className="mock-stage">
-          <div className="mock-interviewer-card">
-            <div className="mock-interviewer-meta">
-              <div className="mock-avatar">
-                <InterviewAvatar />
-              </div>
-              <div>
-                <p className="section-tag">AI 面试官</p>
-                <h2>产品经理模拟面试</h2>
-                <p>重点看你能不能把背景、动作、判断和结果讲清楚。</p>
-              </div>
-            </div>
-
-            <div className="mock-status-pill">
-              <span className="mock-status-dot" />
-              <span>{statusLabel(interviewState)}</span>
-            </div>
-          </div>
-
-          <div className="mock-question-card">
-            <p className="section-tag">当前问题</p>
-            <h3>{currentQuestion || "点开始后，我会先抛出第一题。"}</h3>
-            <p className={`mock-turn-hint ${interviewState === "waiting_for_answer" ? "is-waiting" : ""}`}>{voiceStatus || "先进入这一轮，再像真实面试一样直接开口答。"}</p>
-          </div>
-
-          <div className="mock-conversation">
-            {messages.map((message) => (
-              <div key={message.id} className={`mock-message ${message.role === "assistant" ? "is-assistant" : "is-user"}`}>
-                <p className="mock-message-label">{message.role === "assistant" ? "面试官" : "你的回答"}</p>
-                <p className="mock-message-text">{message.content}</p>
-              </div>
-            ))}
-
-            {liveTranscript && (interviewState === "user_recording" || interviewState === "transcribing") ? (
-              <div className="mock-message is-user is-live">
-                <p className="mock-message-label">你的回答（转写中）</p>
-                <p className="mock-message-text">{liveTranscript}</p>
-              </div>
-            ) : null}
-
-            {interviewState === "reviewing_answer" ? (
-              <div className="mock-message is-user is-reviewing">
-                <p className="mock-message-label">你的回答（可修改后提交）</p>
-                <textarea
-                  className="mock-transcript-editor"
-                  value={transcribedAnswer}
-                  onChange={(event) => setTranscribedAnswer(event.target.value)}
-                  placeholder="这里会显示转写结果，你也可以手动修改后再提交。"
-                  rows={6}
-                />
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mock-controls">
-            <div className="mock-control-main">
-              {interviewState === "idle" ? (
-                <button className="primary-button" onClick={() => void startInterview()}>
-                  开始模拟面试
-                </button>
-              ) : (
-                <button
-                  className={`mock-record-button ${interviewState === "user_recording" ? "is-recording" : ""}`}
-                  onClick={() => void handleRecordToggle()}
-                  disabled={!canToggleRecording}
-                >
-                  <MicrophoneIcon />
-                  <span>{recordButtonLabel}</span>
-                </button>
-              )}
-
-              {interviewState === "reviewing_answer" ? (
-                <>
-                  <button className="primary-button" onClick={() => void submitReviewedAnswer()}>
-                    提交回答
-                  </button>
-                  <button className="secondary-button" onClick={() => redoAnswerRecording()}>
-                    重新录音
-                  </button>
-                </>
-              ) : null}
-
-              {interviewState !== "idle" ? (
-                <button
-                  className="secondary-button"
-                  onClick={() => void finishRoundNow()}
-                  disabled={interviewState === "user_recording" || interviewState === "transcribing" || interviewState === "ai_thinking" || interviewState === "reviewing_answer" || !lastUserAnswer}
-                >
-                  结束本轮
-                </button>
-              ) : null}
-
-              {interviewState === "round_summary" ? (
-                <button className="secondary-button" onClick={() => void startInterview()}>
-                  再来一轮
-                </button>
-              ) : null}
-            </div>
-
-            <div className="mock-control-meta">
-              {isVoiceTimingVisible ? (
-                <>
-                  <div className="voice-status-meta">
-                    <span className="voice-status-dot" />
-                    <span>{controlMetaLabel}</span>
-                    <strong>{formatSeconds(recordingSeconds)}</strong>
+          <div className="mock-live-grid">
+            <div className="mock-primary-column">
+              <div className="mock-interviewer-card">
+                <div className="mock-interviewer-meta">
+                  <div className="mock-avatar">
+                    <InterviewAvatar />
                   </div>
-                  <div className="mock-progress-track" aria-hidden="true">
-                    <span
-                      className="mock-progress-fill"
-                      style={{ width: `${recordingProgress > 0 ? Math.max(recordingProgress * 100, 4) : 0}%` }}
+                  <div>
+                    <p className="section-tag">AI 面试官</p>
+                    <h2>产品经理模拟面试</h2>
+                    <p>重点看你能不能把背景、动作、判断和结果讲清楚。</p>
+                  </div>
+                </div>
+
+                <div className="mock-interviewer-side">
+                  <div className="mock-status-pill">
+                    <span className="mock-status-dot" />
+                    <span>{statusLabel(interviewState)}</span>
+                  </div>
+                  <div className="mock-meta-row">
+                    <span className="mock-meta-chip">追问 {followupCount} 次</span>
+                    <span className="mock-meta-chip">{recognitionLabel(recognitionLanguage)}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mock-question-card">
+                <p className="section-tag">当前问题</p>
+                <h3>{currentQuestion || "点开始后，我会先抛出第一题。"}</h3>
+                <p className={`mock-turn-hint ${interviewState === "waiting_for_answer" ? "is-waiting" : ""}`}>{voiceStatus || "先进入这一轮，再像真实面试一样直接开口答。"}</p>
+              </div>
+
+              <div className="mock-conversation">
+                {messages.map((message) => (
+                  <div key={message.id} className={`mock-message ${message.role === "assistant" ? "is-assistant" : "is-user"}`}>
+                    <p className="mock-message-label">{message.role === "assistant" ? "面试官" : "你的回答"}</p>
+                    <p className="mock-message-text">{message.content}</p>
+                  </div>
+                ))}
+
+                {liveTranscript && (interviewState === "user_recording" || interviewState === "transcribing") ? (
+                  <div className="mock-message is-user is-live">
+                    <p className="mock-message-label">你的回答（转写中）</p>
+                    <p className="mock-message-text">{liveTranscript}</p>
+                  </div>
+                ) : null}
+
+                {interviewState === "reviewing_answer" ? (
+                  <div className="mock-message is-user is-reviewing">
+                    <p className="mock-message-label">你的回答（可修改后提交）</p>
+                    <textarea
+                      className="mock-transcript-editor"
+                      value={transcribedAnswer}
+                      onChange={(event) => setTranscribedAnswer(event.target.value)}
+                      placeholder="这里会显示转写结果，你也可以手动修改后再提交。"
+                      rows={6}
                     />
                   </div>
-                  <VoiceWave level={waveformLevel} />
-                </>
-              ) : isThinkingState ? (
-                <>
-                  <div className="voice-status-meta is-thinking">
-                    <span>{controlMetaLabel}</span>
-                  </div>
-                  <ThinkingPulse />
-                </>
-              ) : (
-                <>
-                  <div className="voice-status-meta">
-                    <span className="voice-status-dot" />
-                    <span>{controlMetaLabel}</span>
-                  </div>
-                  <VoiceWave level={waveformLevel} />
-                </>
-              )}
+                ) : null}
+              </div>
             </div>
 
-            <p className="mock-note">仅基于你真实回答继续追问和整理表达，不会补编项目经历、数据或结果。</p>
+            <div className="mock-side-column">
+              <div className="mock-focus-card">
+                <p className="section-tag">当前任务</p>
+                <h3>{focusTitle(interviewState)}</h3>
+                <p>{voiceStatus || "先开始这一轮，然后像真实面试一样把这一题完整说完。"}</p>
+                <div className="mock-meta-row">
+                  <span className="mock-meta-chip">当前状态：{statusLabel(interviewState)}</span>
+                  <span className="mock-meta-chip">录音上限：5 分钟</span>
+                </div>
+              </div>
+              <div className="mock-language-setting">
+                <label htmlFor="recognition-language">识别语言</label>
+                <select id="recognition-language" value={recognitionLanguage} onChange={handleLanguageChange}>
+                  <option value="zh-CN">简体中文</option>
+                  <option value="zh-TW">繁体中文</option>
+                  <option value="auto">自动</option>
+                </select>
+                <p>默认使用简体中文识别。如果总被识别成繁体，请切换到简体中文。</p>
+                <p>当前使用 DashScope 语音转写。</p>
+              </div>
+
+              <div className="mock-controls">
+                <div className="mock-control-main">
+                  {interviewState === "idle" ? (
+                    <button className="primary-button" onClick={() => void startInterview()}>
+                      开始模拟面试
+                    </button>
+                  ) : (
+                    <button
+                      className={`mock-record-button ${interviewState === "user_recording" ? "is-recording" : ""}`}
+                      onClick={() => void handleRecordToggle()}
+                      disabled={!canToggleRecording}
+                    >
+                      <MicrophoneIcon />
+                      <span>{recordButtonLabel}</span>
+                    </button>
+                  )}
+
+                  {interviewState === "reviewing_answer" ? (
+                    <>
+                      <button className="primary-button" onClick={() => void submitReviewedAnswer()}>
+                        提交回答
+                      </button>
+                      <button className="secondary-button" onClick={() => redoAnswerRecording()}>
+                        重新录音
+                      </button>
+                    </>
+                  ) : null}
+
+                  {interviewState !== "idle" ? (
+                    <button
+                      className="secondary-button"
+                      onClick={() => void finishRoundNow()}
+                      disabled={interviewState === "user_recording" || interviewState === "transcribing" || interviewState === "ai_thinking" || interviewState === "reviewing_answer" || !lastUserAnswer}
+                    >
+                      结束本轮
+                    </button>
+                  ) : null}
+
+                  {interviewState === "round_summary" ? (
+                    <button className="secondary-button" onClick={() => void startInterview()}>
+                      再来一轮
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mock-control-meta">
+                  {isVoiceTimingVisible ? (
+                    <>
+                      <div className="voice-status-meta">
+                        <span className="voice-status-dot" />
+                        <span>{controlMetaLabel}</span>
+                        <strong>{formatSeconds(recordingSeconds)}</strong>
+                      </div>
+                      <div className="mock-progress-track" aria-hidden="true">
+                        <span
+                          className="mock-progress-fill"
+                          style={{ width: `${recordingProgress > 0 ? Math.max(recordingProgress * 100, 4) : 0}%` }}
+                        />
+                      </div>
+                      <VoiceWave level={waveformLevel} />
+                    </>
+                  ) : isThinkingState ? (
+                    <>
+                      <div className="voice-status-meta is-thinking">
+                        <span>{controlMetaLabel}</span>
+                      </div>
+                      <ThinkingPulse />
+                    </>
+                  ) : (
+                    <>
+                      <div className="voice-status-meta">
+                        <span className="voice-status-dot" />
+                        <span>{controlMetaLabel}</span>
+                      </div>
+                      <VoiceWave level={waveformLevel} />
+                    </>
+                  )}
+                </div>
+
+                <p className="mock-note">仅基于你真实回答继续追问和整理表达，不会补编项目经历、数据或结果。</p>
+              </div>
+            </div>
           </div>
 
           {roundSummary ? (

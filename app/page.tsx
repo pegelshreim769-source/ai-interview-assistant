@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PracticeLayout } from "./components/practice-layout";
+import { WorkflowSteps } from "./components/workflow-steps";
 
 type AnalysisResult = {
   mode: "ask_followup" | "generate_practice";
@@ -40,6 +41,8 @@ type AssistantTurn = {
 };
 
 type ConversationTurn = UserTurn | AssistantTurn;
+type PracticeVersionMode = "default" | "shorter" | "natural";
+type WorkflowStatus = "complete" | "current" | "upcoming";
 
 type TranscribeResponse = {
   text: string;
@@ -218,8 +221,13 @@ function AssistantBubble({
   disabled: boolean;
 }) {
   const judgementSummary = useMemo(() => getJudgementSummary(turn.result), [turn.result]);
-  const practiceVersion = useMemo(() => buildPracticeVersion(turn.result, "default"), [turn.result]);
+  const [practiceMode, setPracticeMode] = useState<PracticeVersionMode>("default");
+  const practiceVersion = useMemo(() => buildPracticeVersion(turn.result, practiceMode), [turn.result, practiceMode]);
   const localSupplementRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    setPracticeMode("default");
+  }, [turn.id]);
 
   useEffect(() => {
     if (turn.result.mode === "ask_followup" && !turn.isStreaming && localSupplementRef.current) {
@@ -231,25 +239,12 @@ function AssistantBubble({
     <div className="chat-row assistant-row">
       <div className="assistant-avatar">AI</div>
       <div className="assistant-bubble">
-        <div className="reply-block score-block">
-          <div className="reply-block-header">
-            <p className="section-tag">这版回答，现在大概在哪个档位</p>
-            <span className="score-badge">{turn.result.score.tier || "正在看"}</span>
-          </div>
-          {turn.isStreaming ? <ThinkingIndicator /> : null}
-          <div className="score-row">
-            <strong>{turn.result.score.value || "--"}</strong>
-            <span>/ 100</span>
-          </div>
-          <p className="reply-text">
-            {turn.result.score.summary || (turn.isStreaming ? "正在帮你判断这版回答目前大概在哪个水平…" : "我会先告诉你，这一版回答目前大概在哪个水平。")}
-          </p>
-          {turn.result.reason ? <p className="module-caption">{turn.result.reason}</p> : null}
-        </div>
-
         <div className="reply-block">
           <div className="reply-block-header">
-            <p className="section-tag">这版回答最大的问题</p>
+            <div>
+              <p className="section-tag">这版回答最大的问题</p>
+              <p className="module-caption">先抓最影响面试官判断的那个点，而不是先盯分数。</p>
+            </div>
           </div>
           <p className="reply-text">
             {turn.result.main_issue || (turn.isStreaming ? "正在提炼这版回答里最容易让面试官卡住的点..." : "通常不是没做过，而是还没把能被判断的信息讲出来。这里会先抓最核心的那个问题。")}
@@ -307,6 +302,25 @@ function AssistantBubble({
           </div>
         </div>
 
+        <div className="reply-block score-block">
+          <div className="reply-block-header">
+            <div>
+              <p className="section-tag">当前判断</p>
+              <p className="module-caption">把分数当成温度计就好，重点还是看清楚这版已经能被判断到什么程度。</p>
+            </div>
+            <span className="score-badge">{turn.result.score.tier || "正在看"}</span>
+          </div>
+          {turn.isStreaming ? <ThinkingIndicator /> : null}
+          <div className="score-row">
+            <strong>{turn.result.score.value || "--"}</strong>
+            <span>/ 100</span>
+          </div>
+          <p className="reply-text">
+            {turn.result.score.summary || (turn.isStreaming ? "正在帮你判断这版回答目前大概在哪个水平…" : "我会先告诉你，这一版回答目前大概在哪个水平。")}
+          </p>
+          {turn.result.reason ? <p className="module-caption">{turn.result.reason}</p> : null}
+        </div>
+
         <div className="reply-block">
           <div className="reply-block-header">
             <div>
@@ -327,6 +341,25 @@ function AssistantBubble({
               <p className="section-tag">可直接开口练的版本</p>
               <h3>先别急着背，先把这一版读顺。真正面试时，你只需要讲得比现在更清楚一点。</h3>
             </div>
+            {practiceVersion ? (
+              <div className="practice-variant-switch" role="group" aria-label="练习版本切换">
+                {[
+                  { value: "default", label: "完整" },
+                  { value: "shorter", label: "更短" },
+                  { value: "natural", label: "更自然" }
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={`ghost-button ${practiceMode === option.value ? "is-active" : ""}`}
+                    aria-pressed={practiceMode === option.value}
+                    onClick={() => setPracticeMode(option.value as PracticeVersionMode)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           {turn.result.mode === "ask_followup" ? (
@@ -386,6 +419,46 @@ export default function HomePage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioDataRef = useRef<Uint8Array | null>(null);
+  const assistantTurns = useMemo(
+    () => conversation.filter((turn): turn is AssistantTurn => turn.role === "assistant"),
+    [conversation]
+  );
+  const latestAssistantTurn = assistantTurns.length ? assistantTurns[assistantTurns.length - 1] : null;
+  const needsSupplement = latestAssistantTurn?.result.mode === "ask_followup" || !!pendingSupplementFor;
+  const hasPracticeVersion = !!(latestAssistantTurn && buildPracticeVersion(latestAssistantTurn.result, "default"));
+  const textWorkflow = useMemo<Array<{ label: string; description: string; status: WorkflowStatus }>>(
+    () => [
+      {
+        label: "说出第一版",
+        description: baseAnswer ? "已提交一版真实回答" : "先发你现在会怎么说",
+        status: baseAnswer ? "complete" : "current"
+      },
+      {
+        label: "识别卡点",
+        description: latestAssistantTurn
+          ? "已经抓到这版最容易失分的点"
+          : isAnalyzing
+            ? "正在看这版回答会卡在哪里"
+            : "先看问题和追问方向",
+        status: latestAssistantTurn ? "complete" : baseAnswer || isAnalyzing ? "current" : "upcoming"
+      },
+      {
+        label: "补充真实信息",
+        description: needsSupplement
+          ? "还缺一些背景、动作或结果"
+          : latestAssistantTurn
+            ? "这轮信息已经够用，或已补充完成"
+            : "信息不够时才继续追问",
+        status: needsSupplement ? "current" : latestAssistantTurn ? "complete" : "upcoming"
+      },
+      {
+        label: "开口练",
+        description: hasPracticeVersion ? "已经生成可直接开口练的版本" : "信息够了再给你练习版",
+        status: hasPracticeVersion ? "current" : latestAssistantTurn ? "upcoming" : "upcoming"
+      }
+    ],
+    [baseAnswer, hasPracticeVersion, isAnalyzing, latestAssistantTurn, needsSupplement]
+  );
 
   function clearRecordingTimers() {
     if (recordingIntervalRef.current) {
@@ -851,8 +924,20 @@ export default function HomePage() {
   return (
     <PracticeLayout mode="text" onTryExample={handleTryExample} onNewRound={handleNewRound} shortcutsDisabled={isAnalyzing}>
       <div className="chat-shell">
+        <section className="page-hero page-hero-text">
+          <div className="page-hero-main">
+            <p className="section-tag">文字练习</p>
+            <h1 className="page-title">先把这段经历讲顺</h1>
+            <p className="header-subtitle">先写你现在会怎么说。我会按真实面试的节奏继续追问，再陪你把它讲顺。</p>
+          </div>
+          <aside className="page-hero-aside">
+            <p className="page-hero-note-title">这轮目标</p>
+            <p className="page-hero-note">不是替你把答案写漂亮，而是把背景、动作、判断和结果讲清楚。</p>
+          </aside>
+        </section>
+
         <section className="chat-header">
-          <p className="header-subtitle">先写你现在会怎么说。我会按真实面试的节奏继续追问，再陪你把它讲顺。</p>
+          <WorkflowSteps steps={textWorkflow} />
         </section>
 
         <section className="chat-thread">

@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PracticeLayout } from "../components/practice-layout";
+import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
 import {
   type CustomInterviewDebugTrace,
-  getCustomSessionById,
-  getLatestInProgressCustomSession,
   readCustomSessions,
   type CustomInterviewAnswer,
   type CustomInterviewAnswerMethod,
@@ -19,7 +18,8 @@ import {
   type JdParsed,
   type MatchSummary,
   type ResumeParsed,
-  upsertCustomSession
+  upsertCustomSession,
+  writeCustomSessions
 } from "../lib/custom-interview-storage";
 
 type ParseResumeResponse = {
@@ -195,8 +195,29 @@ export default function CustomInterviewPage() {
   const hasStartedInterview = interviewState === "interviewing" || interviewState === "thinking" || interviewState === "completed";
   const isReadyToParse = !!resumeText.trim() && !!jdText.trim() && resumeInput.confirmed && jdInput.confirmed && !hasStartedInterview;
 
-  function loadSessions() {
-    setHistoryItems(readCustomSessions());
+  async function syncSession(session: CustomInterviewSession) {
+    try {
+      const syncedSessions = await upsertSyncedSession<CustomInterviewSession>("custom-interview", session);
+      writeCustomSessions(syncedSessions);
+      setHistoryItems(syncedSessions);
+    } catch {
+      // Keep local history available when remote sync is unavailable.
+    }
+  }
+
+  async function loadSessions() {
+    const localSessions = readCustomSessions();
+    setHistoryItems(localSessions);
+
+    try {
+      const syncedSessions = await fetchSyncedSessions<CustomInterviewSession>("custom-interview");
+      if (syncedSessions.length) {
+        writeCustomSessions(syncedSessions);
+        setHistoryItems(syncedSessions);
+      }
+    } catch {
+      // Fall back to local cache.
+    }
   }
 
   function persistSession(nextStatus?: CustomInterviewSession["status"]) {
@@ -230,11 +251,13 @@ export default function CustomInterviewPage() {
       debug_trace: debugTrace
     };
 
-    setHistoryItems(upsertCustomSession(session));
+    const nextSessions = upsertCustomSession(session);
+    setHistoryItems(nextSessions);
+    void syncSession(session);
   }
 
   useEffect(() => {
-    loadSessions();
+    void loadSessions();
   }, []);
 
   useEffect(() => {
@@ -539,7 +562,7 @@ export default function CustomInterviewPage() {
   }
 
   function handleContinueLatest() {
-    const session = getLatestInProgressCustomSession();
+    const session = historyItems.find((item) => item.status === "in_progress");
     if (!session) {
       setError("当前没有可继续的定制面试。");
       return;
@@ -549,7 +572,7 @@ export default function CustomInterviewPage() {
   }
 
   function handleSelectHistory(id: string) {
-    const session = getCustomSessionById(id);
+    const session = historyItems.find((item) => item.session_id === id) ?? readCustomSessions().find((item) => item.session_id === id);
     if (!session) {
       setError("这轮定制面试记录暂时找不到了。");
       return;

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
+import { parseJsonObject, readAssistantTextContent } from "../../lib/server/json-output";
 
 const FIRST_QUESTION =
   "请介绍一个你做过、最能体现你产品能力的项目。你可以重点讲：为什么要做、你自己做了什么、最后带来了什么结果。";
@@ -127,7 +129,7 @@ type MockInterviewResponse = {
 type ProviderResponse = {
   choices?: Array<{
     message?: {
-      content?: string;
+      content?: string | Array<{ type?: string; text?: string }>;
     };
   }>;
   error?: {
@@ -158,35 +160,29 @@ function normalizeProviderError(payload: ProviderResponse | null, fallbackText =
   return message || "模拟面试服务暂时不可用，请稍后再试。";
 }
 
-async function requestInterviewTurn(baseUrl: string, apiKey: string, model: string, prompt: string) {
+async function requestInterviewTurn(prompt: string) {
+  const providerConfig = getChatProviderConfig();
   let lastStatus = 500;
   let lastPayload: ProviderResponse | null = null;
   let lastErrorText = "";
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const providerResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: "system",
-            content: "你是一位真实、克制、专业的产品经理面试官。你不能补编候选人没有提供的事实。你必须只输出合法 JSON。"
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: INTERVIEW_SCHEMA
+    const providerResponse = await requestChatCompletion({
+      config: providerConfig,
+      messages: [
+        {
+          role: "system",
+          content: "你是一位真实、克制、专业的产品经理面试官。你不能补编候选人没有提供的事实。你必须只输出合法 JSON。"
+        },
+        {
+          role: "user",
+          content: prompt
         }
-      })
+      ],
+      responseFormat: {
+        type: "json_schema",
+        json_schema: INTERVIEW_SCHEMA
+      }
     });
 
     lastStatus = providerResponse.status || 500;
@@ -233,11 +229,9 @@ async function requestInterviewTurn(baseUrl: string, apiKey: string, model: stri
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";
-    const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+    const providerConfig = getChatProviderConfig();
 
-    if (!apiKey) {
+    if (!providerConfig.apiKey) {
       return NextResponse.json({ error: "缺少 OPENAI_API_KEY。请先在 .env.local 中配置后再开始模拟面试。" }, { status: 500 });
     }
 
@@ -269,7 +263,7 @@ export async function POST(request: Request) {
       .replace("{{followup_count}}", String(followupCount))
       .replace("{{conversation}}", stringifyConversation(history));
 
-    const providerResult = await requestInterviewTurn(baseUrl, apiKey, model, prompt);
+    const providerResult = await requestInterviewTurn(prompt);
 
     if (!providerResult.ok) {
       return NextResponse.json({ error: providerResult.error }, { status: providerResult.status || 500 });
@@ -281,13 +275,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "模型没有返回可用内容，请稍后再试。" }, { status: 500 });
     }
 
-    const content = payload.choices?.[0]?.message?.content;
+    const content = readAssistantTextContent(payload.choices?.[0]?.message?.content);
 
     if (!content) {
       return NextResponse.json({ error: "模型没有返回可用内容，请稍后再试。" }, { status: 500 });
     }
 
-    return NextResponse.json(JSON.parse(content) as MockInterviewResponse);
+    const parsed = parseJsonObject<MockInterviewResponse>(content);
+
+    if (!parsed) {
+      return NextResponse.json({ error: "模型返回的结构化内容不可解析，请稍后再试。" }, { status: 500 });
+    }
+
+    return NextResponse.json(parsed);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "模拟面试服务暂时不可用，请稍后再试。" }, { status: 500 });
   }

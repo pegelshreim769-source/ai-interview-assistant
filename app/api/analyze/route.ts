@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 
 const DECISION_PROMPT_TEMPLATE = `你现在是一位经验丰富、真实、克制的产品经理面试教练。
 
@@ -243,11 +244,9 @@ function encoderChunk(input: string) {
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-5.4-mini";
-    const baseUrl = process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+    const providerConfig = getChatProviderConfig();
 
-    if (!apiKey) {
+    if (!providerConfig.apiKey) {
       return NextResponse.json({ error: "缺少 OPENAI_API_KEY。请先在 .env.local 中配置后再生成分析。" }, { status: 500 });
     }
 
@@ -262,30 +261,23 @@ export async function POST(request: Request) {
     const mergedAnswer = supplement ? `${answer}\n\n【用户后续补充】\n${supplement}` : answer;
     const prompt = DECISION_PROMPT_TEMPLATE.replace("{{user_answer}}", mergedAnswer);
 
-    const providerResponse = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        stream: true,
-        messages: [
-          {
-            role: "system",
-            content: "你是一位经验丰富、真实、克制的产品经理面试教练。你不能替用户补编事实，只能基于用户真实提供的信息做判断与整理。你必须只输出合法 JSON。"
-          },
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: JSON_SCHEMA
+    const providerResponse = await requestChatCompletion({
+      config: providerConfig,
+      stream: true,
+      messages: [
+        {
+          role: "system",
+          content: "你是一位经验丰富、真实、克制的产品经理面试教练。你不能替用户补编事实，只能基于用户真实提供的信息做判断与整理。你必须只输出合法 JSON。"
+        },
+        {
+          role: "user",
+          content: prompt
         }
-      })
+      ],
+      responseFormat: {
+        type: "json_schema",
+        json_schema: JSON_SCHEMA
+      }
     });
 
     if (!providerResponse.ok || !providerResponse.body) {

@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PracticeLayout } from "../components/practice-layout";
+import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
 import {
-  getLatestInProgressSession,
-  getMockSessionById,
   readMockSessions,
   readRecognitionLanguage,
   type InterviewMessage,
@@ -13,6 +12,7 @@ import {
   type RecognitionLanguage,
   type RoundSummary,
   upsertMockSession,
+  writeMockSessions,
   writeRecognitionLanguage
 } from "../lib/mock-interview-storage";
 
@@ -229,8 +229,29 @@ export default function MockInterviewPage() {
 
   const lastUserAnswer = useMemo(() => [...messages].reverse().find((message) => message.role === "user" && message.kind === "answer")?.content ?? "", [messages]);
 
-  function loadSessions() {
-    setHistoryItems(readMockSessions());
+  async function syncSession(session: MockInterviewSession) {
+    try {
+      const syncedSessions = await upsertSyncedSession<MockInterviewSession>("mock-interview", session);
+      writeMockSessions(syncedSessions);
+      setHistoryItems(syncedSessions);
+    } catch {
+      // Keep local cache when remote sync is temporarily unavailable.
+    }
+  }
+
+  async function loadSessions() {
+    const localSessions = readMockSessions();
+    setHistoryItems(localSessions);
+
+    try {
+      const syncedSessions = await fetchSyncedSessions<MockInterviewSession>("mock-interview");
+      if (syncedSessions.length) {
+        writeMockSessions(syncedSessions);
+        setHistoryItems(syncedSessions);
+      }
+    } catch {
+      // Fall back to local cache if remote history is unavailable.
+    }
   }
 
   function persistSession(nextStatus?: MockInterviewSession["status"]) {
@@ -256,7 +277,9 @@ export default function MockInterviewPage() {
       recognition_language: recognitionLanguage
     };
 
-    setHistoryItems(upsertMockSession(session));
+    const nextSessions = upsertMockSession(session);
+    setHistoryItems(nextSessions);
+    void syncSession(session);
   }
 
   function answerReadyState(): InterviewState {
@@ -276,7 +299,7 @@ export default function MockInterviewPage() {
 
   useEffect(() => {
     setRecognitionLanguage(readRecognitionLanguage());
-    loadSessions();
+    void loadSessions();
   }, []);
 
   useEffect(() => {
@@ -368,7 +391,7 @@ export default function MockInterviewPage() {
     formData.append("file", file);
     formData.append("language", recognitionLanguage);
 
-    const response = await fetch("/api/mock-interview/transcribe", {
+    const response = await fetch("/api/transcribe", {
       method: "POST",
       body: formData
     });
@@ -539,25 +562,25 @@ export default function MockInterviewPage() {
       setCurrentQuestion(payload.interviewer_message);
       setMessages(assistantMessages);
       moveToWaitingForAnswer();
-      setHistoryItems(() =>
-        upsertMockSession({
-          session_id: nextSessionId,
-          mode: "mock_interview",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          status: "in_progress",
-          title: payload.interviewer_message || "产品经理模拟面试",
-          current_question: payload.interviewer_message,
-          messages: assistantMessages,
-          summary: null,
-          interview_state: "waiting_for_answer",
-          followup_count: 0,
-          voice_status: WAITING_FOR_ANSWER_MESSAGE,
-          live_transcript: "",
-          duration_seconds: 0,
-          recognition_language: recognitionLanguage
-        })
-      );
+      const initialSession: MockInterviewSession = {
+        session_id: nextSessionId,
+        mode: "mock_interview",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        status: "in_progress",
+        title: payload.interviewer_message || "产品经理模拟面试",
+        current_question: payload.interviewer_message,
+        messages: assistantMessages,
+        summary: null,
+        interview_state: "waiting_for_answer",
+        followup_count: 0,
+        voice_status: WAITING_FOR_ANSWER_MESSAGE,
+        live_transcript: "",
+        duration_seconds: 0,
+        recognition_language: recognitionLanguage
+      };
+      setHistoryItems(() => upsertMockSession(initialSession));
+      void syncSession(initialSession);
     } catch (requestError) {
       setSessionId("");
       setInterviewState("idle");
@@ -795,7 +818,7 @@ export default function MockInterviewPage() {
   }
 
   function handleContinueLatest() {
-    const session = getLatestInProgressSession();
+    const session = historyItems.find((item) => item.status === "in_progress");
     if (!session) {
       setError("当前没有可继续的模拟面试");
       return;
@@ -835,7 +858,7 @@ export default function MockInterviewPage() {
   }
 
   function handleSelectHistory(sessionIdToRestore: string) {
-    const session = getMockSessionById(sessionIdToRestore);
+    const session = historyItems.find((item) => item.session_id === sessionIdToRestore) ?? readMockSessions().find((item) => item.session_id === sessionIdToRestore);
     if (!session) {
       setError("这轮历史记录暂时找不到了。");
       return;

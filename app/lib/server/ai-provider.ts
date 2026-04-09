@@ -38,6 +38,12 @@ type RequestChatCompletionOptions = {
   extraBody?: Record<string, unknown>;
 };
 
+type RequestAudioTranscriptionOptions = {
+  config: ProviderConfig;
+  file: File;
+  language?: string;
+};
+
 function normalizeBaseUrl(value: string) {
   return value.replace(/\/$/, "");
 }
@@ -71,6 +77,19 @@ function resolveResponseFormat(kind: ProviderKind, format: ResponseFormat | unde
     response_format: format,
     extraBody: {}
   };
+}
+
+function detectAudioMimeType(file: File) {
+  if (file.type) return file.type;
+  if (file.name.endsWith(".mp4") || file.name.endsWith(".m4a")) return "audio/mp4";
+  if (file.name.endsWith(".ogg")) return "audio/ogg";
+  if (file.name.endsWith(".wav")) return "audio/wav";
+  return "audio/webm";
+}
+
+function languageToAsrLanguage(language?: string) {
+  if (language === "zh-CN" || language === "zh-TW") return "zh";
+  return undefined;
 }
 
 export function getChatProviderConfig() {
@@ -147,5 +166,39 @@ export async function getProviderFileContent(config: ProviderConfig, fileId: str
       Authorization: `Bearer ${config.apiKey}`
     },
     signal
+  });
+}
+
+export async function requestAudioTranscription({ config, file, language }: RequestAudioTranscriptionOptions) {
+  const mimeType = detectAudioMimeType(file);
+  const base64Audio = Buffer.from(await file.arrayBuffer()).toString("base64");
+  const dataUri = `data:${mimeType};base64,${base64Audio}`;
+  const asrLanguage = languageToAsrLanguage(language);
+
+  return requestChatCompletion({
+    config,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_audio",
+            input_audio: {
+              data: dataUri
+            }
+          }
+        ]
+      }
+    ],
+    extraBody: {
+      asr_options: asrLanguage
+        ? {
+            language: asrLanguage,
+            enable_itn: true
+          }
+        : {
+            enable_itn: true
+          }
+    }
   });
 }

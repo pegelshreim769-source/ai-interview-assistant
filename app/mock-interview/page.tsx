@@ -368,7 +368,7 @@ export default function MockInterviewPage() {
     formData.append("file", file);
     formData.append("language", recognitionLanguage);
 
-    const response = await fetch("/api/mock-interview/transcribe", {
+    const response = await fetch("/api/transcribe", {
       method: "POST",
       body: formData
     });

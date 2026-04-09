@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PracticeLayout } from "../components/practice-layout";
+import { WorkflowSteps } from "../components/workflow-steps";
 import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
 import {
   type CustomInterviewDebugTrace,
@@ -54,6 +55,8 @@ type RunCustomInterviewResponse = {
   debug_trace: CustomInterviewDebugTrace;
   error?: string;
 };
+
+type WorkflowStatus = "complete" | "current" | "upcoming";
 
 const SAMPLE_RESUME = `产品经理｜AI 效率工具
 
@@ -144,6 +147,12 @@ function compactCopy(text: string, limit = 72) {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, limit).trim()}...`;
+}
+
+function workflowStatusLabel(status: WorkflowStatus) {
+  if (status === "complete") return "已完成";
+  if (status === "current") return "当前步骤";
+  return "待开始";
 }
 
 async function postJson<T>(payload: unknown) {
@@ -312,6 +321,52 @@ export default function CustomInterviewPage() {
   const compactJobFocus = matchSummary?.job_focus.slice(0, 3) ?? [];
   const primaryExperience = matchSummary?.recommended_experiences[0] ?? null;
   const compactFollowups = matchSummary?.likely_followups.slice(0, 2) ?? [];
+  const showDebugTools = process.env.NODE_ENV !== "production";
+  const materialsConfirmed = resumeInput.confirmed && jdInput.confirmed;
+  const hasBriefing = !!matchSummary;
+  const hasFinalReview = !!finalReview;
+  const hasInterviewStarted = questions.length > 0 || answers.length > 0 || interviewState === "completed" || hasFinalReview;
+  const materialStageStatus: WorkflowStatus = hasBriefing || hasInterviewStarted || (interviewState === "thinking" && !questions.length) ? "complete" : "current";
+  const briefingStageStatus: WorkflowStatus = hasBriefing ? (hasInterviewStarted || hasFinalReview ? "complete" : "current") : materialsConfirmed ? "current" : "upcoming";
+  const configStageStatus: WorkflowStatus = hasInterviewStarted || hasFinalReview ? "complete" : hasBriefing ? "current" : "upcoming";
+  const interviewStageStatus: WorkflowStatus = hasFinalReview ? "complete" : hasInterviewStarted ? "current" : hasBriefing ? "upcoming" : "upcoming";
+  const reviewStageStatus: WorkflowStatus = hasFinalReview ? "current" : hasStartedInterview ? "upcoming" : "upcoming";
+  const customWorkflow = useMemo(
+    () => [
+      {
+        label: "准备材料",
+        description: materialsConfirmed ? "简历和 JD 都已确认" : "先补齐并确认简历与岗位 JD",
+        status: materialStageStatus
+      },
+      {
+        label: "岗位 briefing",
+        description: hasBriefing ? "岗位重点和主讲经历已就绪" : "先生成一页轻量摘要",
+        status: briefingStageStatus
+      },
+      {
+        label: "定制问答",
+        description: hasInterviewStarted ? "正在按岗位重点继续追问" : "briefing 完成后开始这轮岗位问答",
+        status: interviewStageStatus === "current" ? "current" : configStageStatus
+      },
+      {
+        label: "岗位复盘",
+        description: hasFinalReview ? "已经整理成岗位导向复盘" : "问答结束后自动收束成复盘",
+        status: reviewStageStatus
+      }
+    ],
+    [
+      briefingStageStatus,
+      configStageStatus,
+      hasBriefing,
+      hasFinalReview,
+      hasInterviewStarted,
+      hasStartedInterview,
+      interviewStageStatus,
+      materialStageStatus,
+      materialsConfirmed,
+      reviewStageStatus
+    ]
+  );
 
   function invalidateBriefing() {
     setResumeParsed(null);
@@ -807,11 +862,35 @@ export default function CustomInterviewPage() {
       onSelectHistory={handleSelectHistory}
     >
       <div className="custom-shell">
-        <section className="custom-header">
-          <div>
-            <h1 className="mock-title">定制面试</h1>
+        <section className="page-hero page-hero-custom">
+          <div className="page-hero-main">
+            <p className="section-tag">定制面试</p>
+            <h1 className="page-title">先做岗位 briefing，再开始这一轮更贴岗位的追问</h1>
             <p className="mock-subtitle">基于你的简历和岗位 JD，先识别最值得主讲的经历，再开始这一轮更贴岗位的面试。</p>
           </div>
+          <aside className="page-hero-aside">
+            <p className="page-hero-note-title">当前主线</p>
+            <p className="page-hero-note">
+              {hasBriefing
+                ? `优先主讲：${recommendedExperience}`
+                : "先把材料确认好，我会先帮你做一页面试前 briefing。"}
+            </p>
+          </aside>
+        </section>
+
+        <section className="custom-header">
+          <WorkflowSteps steps={customWorkflow} />
+        </section>
+
+        <section className="custom-stage-intro">
+          <div className="custom-stage-heading">
+            <div>
+              <p className="section-tag">第 1 步</p>
+              <h2>准备这轮材料</h2>
+            </div>
+            <span className={`stage-status-pill is-${materialStageStatus}`}>{workflowStatusLabel(materialStageStatus)}</span>
+          </div>
+          <p className="custom-brief-copy">先把简历和岗位 JD 固定下来，我会基于这两份材料做 briefing，不会自己补编内容。</p>
         </section>
 
         <section className="custom-input-grid">
@@ -880,10 +959,13 @@ export default function CustomInterviewPage() {
           </div>
         </section>
 
-        <section className="custom-card">
+        <section className={`custom-card custom-stage-card is-${briefingStageStatus}`}>
           <div className="custom-card-head">
             <div>
-              <p className="section-tag">岗位摘要</p>
+              <div className="custom-stage-inline">
+                <p className="section-tag">第 2 步</p>
+                <span className={`stage-status-pill is-${briefingStageStatus}`}>{workflowStatusLabel(briefingStageStatus)}</span>
+              </div>
               <h2>先做一页轻量 briefing</h2>
             </div>
             <button className="primary-button" onClick={() => void handleParse()} disabled={interviewState === "thinking" || !isReadyToParse}>
@@ -934,7 +1016,7 @@ export default function CustomInterviewPage() {
           )}
         </section>
 
-        {matchSummary ? (
+        {showDebugTools && matchSummary ? (
           <details className="custom-card custom-debug-card">
             <summary className="custom-debug-summary">开发调试：查看定制信息是否真正进入出题链路</summary>
             <div className="custom-debug-grid">
@@ -966,16 +1048,21 @@ export default function CustomInterviewPage() {
           </details>
         ) : null}
 
-        <section className="custom-card">
+        <section className={`custom-card custom-stage-card is-${configStageStatus}`}>
           <div className="custom-card-head">
             <div>
-              <p className="section-tag">面试配置</p>
+              <div className="custom-stage-inline">
+                <p className="section-tag">第 3 步</p>
+                <span className={`stage-status-pill is-${configStageStatus}`}>{workflowStatusLabel(configStageStatus)}</span>
+              </div>
               <h2>决定这一轮怎么问</h2>
             </div>
             <button className="primary-button" onClick={() => void handleStartInterview()} disabled={!matchSummary || hasStartedInterview}>
               开始这轮定制面试
             </button>
           </div>
+
+          <p className="custom-brief-copy">先看 briefing，再决定这轮面试官更偏数据、用户洞察还是业务判断。</p>
 
           <div className="custom-config-grid">
             <div className="custom-config-group">
@@ -1032,10 +1119,13 @@ export default function CustomInterviewPage() {
         </section>
 
         {hasStartedInterview ? (
-          <section className="custom-interview-panel">
+          <section className={`custom-interview-panel custom-stage-card is-${interviewStageStatus}`}>
             <div className="custom-topbar">
               <div>
-                <p className="section-tag">当前模式</p>
+                <div className="custom-stage-inline">
+                  <p className="section-tag">第 4 步</p>
+                  <span className={`stage-status-pill is-${interviewStageStatus}`}>{workflowStatusLabel(interviewStageStatus)}</span>
+                </div>
                 <h2>定制面试</h2>
               </div>
               <div className="custom-topbar-meta">
@@ -1050,6 +1140,21 @@ export default function CustomInterviewPage() {
               </div>
             </div>
 
+            <div className="custom-evidence-grid">
+              <div className="custom-evidence-item">
+                <span>当前主讲经历</span>
+                <strong>{recommendedExperience}</strong>
+              </div>
+              <div className="custom-evidence-item">
+                <span>岗位重点</span>
+                <strong>{briefingTags.length ? briefingTags.join(" · ") : "等 briefing 完成后显示"}</strong>
+              </div>
+              <div className="custom-evidence-item">
+                <span>这轮优先压实</span>
+                <strong>{latestWeakPoint || "我会先从岗位最看重、你最容易被追问的点切进去"}</strong>
+              </div>
+            </div>
+
             <div className="custom-question-card">
               <div className="custom-question-meta">
                 <span className="custom-question-index">
@@ -1059,7 +1164,7 @@ export default function CustomInterviewPage() {
               </div>
               <h3>{currentQuestion?.content || "这一轮已经结束，下面是岗位导向复盘。"}</h3>
               {latestWeakPoint ? <p className="custom-helper">这一轮我优先压实的点：{latestWeakPoint}</p> : null}
-              {debugTrace ? <p className="custom-helper">调试：{debugTrace.generation_input_summary}</p> : null}
+              {showDebugTools && debugTrace ? <p className="custom-helper">调试：{debugTrace.generation_input_summary}</p> : null}
             </div>
 
             {currentQuestion ? (
@@ -1110,10 +1215,13 @@ export default function CustomInterviewPage() {
         ) : null}
 
         {finalReview ? (
-          <section className="custom-card">
+          <section className={`custom-card custom-stage-card is-${reviewStageStatus}`}>
             <div className="custom-card-head">
               <div>
-                <p className="section-tag">岗位导向复盘</p>
+                <div className="custom-stage-inline">
+                  <p className="section-tag">第 5 步</p>
+                  <span className={`stage-status-pill is-${reviewStageStatus}`}>{workflowStatusLabel(reviewStageStatus)}</span>
+                </div>
                 <h2>这一轮先这样收</h2>
               </div>
             </div>

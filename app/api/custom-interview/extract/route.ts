@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getChatProviderConfig, getProviderFileContent, uploadProviderFile } from "../../../lib/server/ai-provider";
 
 export const runtime = "nodejs";
 
@@ -7,10 +8,7 @@ type ExtractKind = "resume" | "jd_image";
 const EXTRACTION_TIMEOUT_MS = 45000;
 
 function providerConfig() {
-  return {
-    apiKey: process.env.OPENAI_API_KEY,
-    baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "")
-  };
+  return getChatProviderConfig();
 }
 
 function assertSupportedFile(kind: ExtractKind, fileName: string) {
@@ -84,31 +82,14 @@ async function extractWithProvider(file: File) {
   const timeout = setTimeout(() => controller.abort(), EXTRACTION_TIMEOUT_MS);
 
   try {
-    const uploadForm = new FormData();
-    uploadForm.append("purpose", "file-extract");
-    uploadForm.append("file", file);
-
-    const uploadResponse = await fetch(`${baseUrl}/files`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: uploadForm,
-      signal: controller.signal
-    });
+    const uploadResponse = await uploadProviderFile({ apiKey, baseUrl, model: providerConfig().model, kind: providerConfig().kind }, file, "file-extract", controller.signal);
 
     const uploadPayload = (await uploadResponse.json().catch(() => ({}))) as { id?: string; error?: { message?: string } };
     if (!uploadResponse.ok || !uploadPayload.id) {
       throw new Error(uploadPayload.error?.message || "当前模型服务暂不支持文件内容抽取。");
     }
 
-    const contentResponse = await fetch(`${baseUrl}/files/${uploadPayload.id}/content`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      },
-      signal: controller.signal
-    });
+    const contentResponse = await getProviderFileContent({ apiKey, baseUrl, model: providerConfig().model, kind: providerConfig().kind }, uploadPayload.id, controller.signal);
 
     const contentText = await contentResponse.text();
     if (!contentResponse.ok) {

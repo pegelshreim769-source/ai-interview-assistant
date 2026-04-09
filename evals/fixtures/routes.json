@@ -1,0 +1,50 @@
+{
+  "analyze": [
+    {
+      "name": "analyze-followup",
+      "answer": "我做过一个首页改版，主要是想提升用户体验。我和团队一起推进了很多优化。",
+      "expectedMode": "ask_followup"
+    },
+    {
+      "name": "analyze-practice",
+      "answer": "我最近负责过一次新用户转化优化。当时注册完成后的首周激活率持续下降，我先拆了漏斗，发现问题集中在首次功能体验阶段。我主导了用户访谈和路径分析，最后把问题定位到引导信息过载和关键动作太多。基于这个判断，我推动团队先改了首屏引导、简化关键步骤，并上线了两版实验。上线后首周激活率提升了17%，关键流程完成率提升了12%。",
+      "expectedMode": "generate_practice"
+    }
+  ],
+  "mockInterview": [
+    {
+      "name": "mock-followup",
+      "followupCount": 0,
+      "history": [
+        {
+          "role": "assistant",
+          "kind": "question",
+          "content": "请介绍一个你做过、最能体现你产品能力的项目。"
+        },
+        {
+          "role": "user",
+          "kind": "answer",
+          "content": "我做过一个改版项目，主要是优化体验，团队一起做了不少事情。"
+        }
+      ],
+      "expectedMode": "ask_followup"
+    },
+    {
+      "name": "mock-summary",
+      "followupCount": 1,
+      "history": [
+        {
+          "role": "assistant",
+          "kind": "question",
+          "content": "请介绍一个你做过、最能体现你产品能力的项目。"
+        },
+        {
+          "role": "user",
+          "kind": "answer",
+          "content": "我负责过一次新用户转化优化，背景是注册后首周激活持续下降。我先拆漏斗、看用户反馈，发现问题集中在首次上手太复杂。我主导了引导流程改版和实验设计，推动研发两周内上线。最后首周激活率提升了17%，关键流程完成率提升了12%。"
+        }
+      ],
+      "expectedMode": "round_summary"
+    }
+  ]
+}

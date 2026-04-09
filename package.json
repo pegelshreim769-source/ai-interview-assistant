@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "eval:routes": "node scripts/eval-routes.mjs"
   },
   "dependencies": {
     "mammoth": "^1.12.0",

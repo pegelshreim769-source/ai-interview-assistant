@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { BrandLogo } from "./brand-logo";
 
 type PracticeMode = "text" | "mock" | "custom";
+type ThemePreference = "system" | "light" | "dark";
+type AccentTone = "blue" | "teal" | "amber" | "coral" | "white";
 type SidebarHistoryItem = {
   id: string;
   title: string;
@@ -23,6 +26,86 @@ type PracticeLayoutProps = {
   onSelectHistory?: (id: string) => void;
   shortcutsDisabled?: boolean;
 };
+
+const MODE_DETAILS: Record<
+  PracticeMode,
+  {
+    label: string;
+    short: string;
+    goal: string;
+    rhythm: string[];
+  }
+> = {
+  text: {
+    label: "文字练习",
+    short: "文",
+    goal: "先把真实经历讲清楚，再进入可直接开口练的一版。",
+    rhythm: ["第一版", "找卡点", "补信息", "开口练"]
+  },
+  mock: {
+    label: "模拟面试",
+    short: "模",
+    goal: "像真实面试一样一问一答，训练追问和回答节奏。",
+    rhythm: ["进入一轮", "听题", "回答", "小结"]
+  },
+  custom: {
+    label: "定制面试",
+    short: "定",
+    goal: "按简历和岗位交集来练，优先压实最可能被追问的点。",
+    rhythm: ["准备材料", "briefing", "岗位问答", "复盘"]
+  }
+};
+
+const THEME_STORAGE_KEY = "interview-lab-theme";
+const ACCENT_STORAGE_KEY = "interview-lab-accent";
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; short: string }> = [
+  { value: "system", label: "跟随系统", short: "系" },
+  { value: "light", label: "浅色", short: "浅" },
+  { value: "dark", label: "深色", short: "深" }
+];
+const ACCENT_OPTIONS: Array<{ value: AccentTone; label: string; swatchClassName: string }> = [
+  { value: "blue", label: "雾蓝", swatchClassName: "is-blue" },
+  { value: "teal", label: "青岚", swatchClassName: "is-teal" },
+  { value: "amber", label: "琥珀", swatchClassName: "is-amber" },
+  { value: "coral", label: "珊瑚", swatchClassName: "is-coral" },
+  { value: "white", label: "白系", swatchClassName: "is-white" }
+];
+
+function resolveTheme(preference: ThemePreference, isSystemDark: boolean) {
+  return preference === "system" ? (isSystemDark ? "dark" : "light") : preference;
+}
+
+function applyAppearance(preference: ThemePreference, accentTone: AccentTone) {
+  if (typeof window === "undefined") return;
+
+  const root = document.documentElement;
+  const isSystemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.themePreference = preference;
+  root.dataset.theme = resolveTheme(preference, isSystemDark);
+  root.dataset.accent = accentTone;
+}
+
+function readThemePreference(): ThemePreference {
+  if (typeof window === "undefined") return "system";
+
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function readAccentTone(): AccentTone {
+  if (typeof window === "undefined") return "blue";
+
+  try {
+    const stored = window.localStorage.getItem(ACCENT_STORAGE_KEY);
+    return stored === "blue" || stored === "teal" || stored === "amber" || stored === "coral" || stored === "white" ? stored : "blue";
+  } catch {
+    return "blue";
+  }
+}
 
 function MenuIcon({ collapsed }: { collapsed: boolean }) {
   return (
@@ -45,6 +128,9 @@ export function PracticeLayout({
   shortcutsDisabled = false
 }: PracticeLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [accentTone, setAccentTone] = useState<AccentTone>("blue");
+  const modeDetail = MODE_DETAILS[mode];
   const sortedHistoryItems = [...historyItems].sort((left, right) => {
     if (left.status === "in_progress" && right.status !== "in_progress") return -1;
     if (left.status !== "in_progress" && right.status === "in_progress") return 1;
@@ -62,12 +148,57 @@ export function PracticeLayout({
     return "进行中";
   }
 
+  useEffect(() => {
+    const nextPreference = readThemePreference();
+    const nextAccentTone = readAccentTone();
+    setThemePreference(nextPreference);
+    setAccentTone(nextAccentTone);
+    applyAppearance(nextPreference, nextAccentTone);
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleSystemThemeChange = () => {
+      if (readThemePreference() === "system") {
+        applyAppearance("system", readAccentTone());
+      }
+    };
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleSystemThemeChange);
+      return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
+    }
+
+    mediaQuery.addListener(handleSystemThemeChange);
+    return () => mediaQuery.removeListener(handleSystemThemeChange);
+  }, []);
+
+  function updateThemePreference(nextPreference: ThemePreference) {
+    setThemePreference(nextPreference);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextPreference);
+    } catch {
+      // Ignore storage failures and still apply the in-memory theme.
+    }
+    applyAppearance(nextPreference, accentTone);
+  }
+
+  function updateAccentTone(nextAccentTone: AccentTone) {
+    setAccentTone(nextAccentTone);
+    try {
+      window.localStorage.setItem(ACCENT_STORAGE_KEY, nextAccentTone);
+    } catch {
+      // Ignore storage failures and still apply the in-memory accent.
+    }
+    applyAppearance(themePreference, nextAccentTone);
+  }
+
   return (
-    <div className={`app-shell ${collapsed ? "is-collapsed" : ""}`}>
+    <div className={`app-shell mode-${mode} ${collapsed ? "is-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-top">
           <div className="sidebar-brand">
-            <div className="sidebar-logo">IL</div>
+            <div className="sidebar-logo">
+              <BrandLogo className="brand-logo-mark" title="Interview Lab" />
+            </div>
             {!collapsed ? (
               <div>
                 <p className="brand-name sidebar-brand-name">INTERVIEW LAB</p>
@@ -104,6 +235,23 @@ export function PracticeLayout({
             </Link>
           </nav>
         </div>
+
+        {!collapsed ? (
+          <div className="sidebar-section">
+            <div className={`sidebar-mode-card is-${mode}`}>
+              <p className="sidebar-mode-eyebrow">当前模式</p>
+              <h2 className="sidebar-mode-title">{modeDetail.label}</h2>
+              <p className="sidebar-mode-copy">{modeDetail.goal}</p>
+              <div className="sidebar-mode-flow" aria-hidden="true">
+                {modeDetail.rhythm.map((item) => (
+                  <span key={item} className="sidebar-mode-chip">
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="sidebar-section sidebar-history-section">
           {!collapsed ? <p className="sidebar-section-title">快捷入口</p> : null}
@@ -183,7 +331,46 @@ export function PracticeLayout({
         </div>
       </aside>
 
-      <main className="app-main">{children}</main>
+      <main className="app-main">
+        <div className="app-main-toolbar">
+          <div className="appearance-dock" role="group" aria-label="界面外观设置">
+            <div className="appearance-group" role="radiogroup" aria-label="界面主题">
+              {THEME_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  className={`appearance-mode-button ${themePreference === option.value ? "is-active" : ""}`}
+                  aria-checked={themePreference === option.value}
+                  onClick={() => updateThemePreference(option.value)}
+                  title={option.label}
+                  aria-label={option.label}
+                >
+                  <span className="appearance-mode-short">{option.short}</span>
+                </button>
+              ))}
+            </div>
+            <span className="appearance-divider" aria-hidden="true" />
+            <div className="appearance-group appearance-tone-group" role="radiogroup" aria-label="界面色系">
+              {ACCENT_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  className={`appearance-swatch ${accentTone === option.value ? "is-active" : ""}`}
+                  aria-checked={accentTone === option.value}
+                  onClick={() => updateAccentTone(option.value)}
+                  title={option.label}
+                  aria-label={`切换到${option.label}色系`}
+                >
+                  <span className={`appearance-swatch-dot ${option.swatchClassName}`} />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

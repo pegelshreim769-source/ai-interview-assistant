@@ -921,6 +921,45 @@ textarea {
   line-height: 1.7;
 }
 
+.beta-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+.beta-notice-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.beta-notice-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.beta-notice-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.65;
+}
+
 .workflow-steps {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -2503,6 +2542,10 @@ textarea {
   .workflow-steps,
   .mock-live-grid,
   .custom-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .beta-notice {
     grid-template-columns: 1fr;
   }
 

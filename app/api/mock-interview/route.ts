@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { parseJsonObject, readAssistantTextContent } from "../../lib/server/json-output";
+import { LIMITS } from "../../lib/shared/limits";
 
 const FIRST_QUESTION =
   "请介绍一个你做过、最能体现你产品能力的项目。你可以重点讲：为什么要做、你自己做了什么、最后带来了什么结果。";
@@ -144,6 +145,10 @@ function stringifyConversation(history: MockTurn[]) {
     .join("\n");
 }
 
+function historyCharCount(history: MockTurn[]) {
+  return history.reduce((sum, turn) => sum + turn.content.length, 0);
+}
+
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -256,6 +261,15 @@ export async function POST(request: Request) {
 
     if (!history.length) {
       return NextResponse.json({ error: "缺少对话上下文，暂时无法继续这轮模拟面试。" }, { status: 400 });
+    }
+
+    const latestUserAnswer = [...history].reverse().find((turn) => turn.role === "user" && turn.kind === "answer")?.content.trim() || "";
+    if (latestUserAnswer.length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS) {
+      return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
+    }
+
+    if (historyCharCount(history) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
+      return NextResponse.json({ error: `当前这轮对话内容过长，最多支持 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 个字符。请新开一轮继续练习。` }, { status: 400 });
     }
 
     const prompt = INTERVIEW_PROMPT_TEMPLATE

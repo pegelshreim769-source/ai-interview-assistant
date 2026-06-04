@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getChatProviderConfig, getProviderFileContent, uploadProviderFile } from "../../../lib/server/ai-provider";
+import { LIMITS } from "../../../lib/shared/limits";
 
 export const runtime = "nodejs";
 
@@ -154,6 +155,14 @@ export async function POST(request: Request) {
 
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "缺少需要提取的文件。" }, { status: 400 });
+    }
+
+    if (!file.size) {
+      return NextResponse.json({ error: "上传的文件为空，请重新选择后再试。" }, { status: 400 });
+    }
+
+    if (file.size > LIMITS.UPLOAD_FILE_MAX_BYTES) {
+      return NextResponse.json({ error: `上传文件不能超过 ${Math.floor(LIMITS.UPLOAD_FILE_MAX_BYTES / (1024 * 1024))}MB，请压缩后再试。` }, { status: 400 });
     }
 
     let extractedText = "";

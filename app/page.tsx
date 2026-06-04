@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BetaPrivacyNotice } from "./components/beta-privacy-notice";
 import { PracticeLayout } from "./components/practice-layout";
 import { WorkflowSteps } from "./components/workflow-steps";
+import { LIMITS } from "./lib/shared/limits";
 
 type AnalysisResult = {
   mode: "ask_followup" | "generate_practice";
@@ -292,6 +294,7 @@ function AssistantBubble({
                   className="followup-input"
                   value={supplementDraft}
                   onChange={(event) => onSupplementChange(event.target.value)}
+                  maxLength={LIMITS.ANALYZE_SUPPLEMENT_MAX_CHARS}
                   placeholder="请补充这个项目的具体背景、你个人负责的动作、以及最终结果或验证方式"
                 />
                 <button className="secondary-button" onClick={onContinue} disabled={disabled || !supplementDraft.trim()}>
@@ -515,6 +518,11 @@ export default function HomePage() {
   async function transcribeAudio(audioBlob: Blob) {
     const extension = audioBlob.type.includes("mp4") ? "m4a" : audioBlob.type.includes("ogg") ? "ogg" : audioBlob.type.includes("wav") ? "wav" : "webm";
     const file = new File([audioBlob], `practice-answer.${extension}`, { type: audioBlob.type || "audio/webm" });
+
+    if (file.size > LIMITS.AUDIO_FILE_MAX_BYTES) {
+      throw new Error("这段录音有点大了，请控制在 4MB 以内后再试。");
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("language", "zh-CN");
@@ -834,6 +842,11 @@ export default function HomePage() {
       return;
     }
 
+    if (content.length > LIMITS.ANALYZE_ANSWER_MAX_CHARS) {
+      setError(`这段回答有点长了，请先压到 ${LIMITS.ANALYZE_ANSWER_MAX_CHARS} 字以内再生成反馈。`);
+      return;
+    }
+
     setIsAnalyzing(true);
     setError("");
     setBaseAnswer(content);
@@ -867,6 +880,11 @@ export default function HomePage() {
 
     const nextSupplements = [...supplements, content];
     const mergedSupplement = nextSupplements.join("\n\n");
+
+    if (mergedSupplement.length > LIMITS.ANALYZE_SUPPLEMENT_MAX_CHARS) {
+      setError(`补充信息先控制在 ${LIMITS.ANALYZE_SUPPLEMENT_MAX_CHARS} 字以内，我们更容易继续追问和整理。`);
+      return;
+    }
 
     setIsAnalyzing(true);
     setError("");
@@ -936,6 +954,8 @@ export default function HomePage() {
           </aside>
         </section>
 
+        <BetaPrivacyNotice mode="text" />
+
         <section className="chat-header">
           <WorkflowSteps steps={textWorkflow} />
         </section>
@@ -984,6 +1004,7 @@ export default function HomePage() {
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={handleDraftKeyDown}
+                maxLength={LIMITS.ANALYZE_ANSWER_MAX_CHARS}
                 placeholder="例如：我最近做过一次首页改版，当时核心问题是新用户转化持续下降……"
               />
 
@@ -1016,7 +1037,7 @@ export default function HomePage() {
                   : isTranscribing
                     ? "正在转写语音"
                     : draft.trim().length > 0
-                      ? `已输入 ${draft.trim().length} 字`
+                      ? `已输入 ${draft.trim().length} / ${LIMITS.ANALYZE_ANSWER_MAX_CHARS} 字`
                       : "Enter 发送，Shift + Enter 换行"}
               </span>
               <span>{voiceStatus || "语音最长 5 分钟"}</span>

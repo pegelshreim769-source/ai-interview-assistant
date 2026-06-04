@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAsrProviderConfig, requestAudioTranscription } from "../../lib/server/ai-provider";
 import { readAssistantTextContent } from "../../lib/server/json-output";
+import { LIMITS } from "../../lib/shared/limits";
 
 type AsrResponse = {
   choices?: Array<{
@@ -31,6 +32,10 @@ export async function POST(request: Request) {
 
     if (!file.size) {
       return NextResponse.json({ error: "录音文件为空，请重新录音后再试。" }, { status: 400 });
+    }
+
+    if (file.size > LIMITS.AUDIO_FILE_MAX_BYTES) {
+      return NextResponse.json({ error: `录音文件不能超过 ${Math.floor(LIMITS.AUDIO_FILE_MAX_BYTES / (1024 * 1024))}MB，请缩短录音后重试。` }, { status: 400 });
     }
 
     const providerResponse = await requestAudioTranscription({

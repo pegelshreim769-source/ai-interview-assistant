@@ -3,6 +3,7 @@
 import type { SessionMode } from "../server/session-store";
 
 const CLIENT_ID_KEY = "interview-lab.client-id";
+const ENABLE_SERVER_SESSION_SYNC = process.env.NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC === "true";
 
 function createClientId() {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -20,6 +21,10 @@ export function getClientId() {
 }
 
 export async function fetchSyncedSessions<T>(mode: SessionMode) {
+  if (!ENABLE_SERVER_SESSION_SYNC) {
+    return [] as T[];
+  }
+
   const clientId = getClientId();
   if (!clientId) return [] as T[];
 
@@ -38,8 +43,14 @@ export async function fetchSyncedSessions<T>(mode: SessionMode) {
 }
 
 export async function upsertSyncedSession<T>(mode: SessionMode, session: T) {
+  if (!ENABLE_SERVER_SESSION_SYNC) {
+    throw new Error("Server session sync is disabled.");
+  }
+
   const clientId = getClientId();
-  if (!clientId) return [] as T[];
+  if (!clientId) {
+    throw new Error("Missing client id for session sync.");
+  }
 
   const response = await fetch(`/api/sessions/${mode}`, {
     method: "POST",

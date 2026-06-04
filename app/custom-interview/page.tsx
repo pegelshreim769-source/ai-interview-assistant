@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { BetaPrivacyNotice } from "../components/beta-privacy-notice";
 import { PracticeLayout } from "../components/practice-layout";
 import { WorkflowSteps } from "../components/workflow-steps";
 import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
+import { LIMITS } from "../lib/shared/limits";
 import {
   type CustomInterviewDebugTrace,
   readCustomSessions,
@@ -147,6 +149,10 @@ function compactCopy(text: string, limit = 72) {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= limit) return normalized;
   return `${normalized.slice(0, limit).trim()}...`;
+}
+
+function answerHistoryChars(answers: CustomInterviewAnswer[], currentAnswer = "") {
+  return answers.reduce((sum, answer) => sum + answer.content.trim().length, 0) + currentAnswer.trim().length;
 }
 
 function workflowStatusLabel(status: WorkflowStatus) {
@@ -406,6 +412,12 @@ export default function CustomInterviewPage() {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (file.size > LIMITS.UPLOAD_FILE_MAX_BYTES) {
+      setResumeInputError("这份简历文件有点大了，请控制在 4MB 以内后再上传。");
+      event.target.value = "";
+      return;
+    }
+
     setIsExtractingResume(true);
     setResumeInputError("");
     setError("");
@@ -435,6 +447,12 @@ export default function CustomInterviewPage() {
   async function handleJdImageUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (file.size > LIMITS.UPLOAD_FILE_MAX_BYTES) {
+      setJdInputError("这张 JD 图片有点大了，请控制在 4MB 以内后再上传。");
+      event.target.value = "";
+      return;
+    }
 
     setIsExtractingJd(true);
     setJdInputError("");
@@ -496,6 +514,11 @@ export default function CustomInterviewPage() {
       return;
     }
 
+    if (resumeText.trim().length > LIMITS.CUSTOM_TEXT_MAX_CHARS) {
+      setResumeInputError(`简历文本先控制在 ${LIMITS.CUSTOM_TEXT_MAX_CHARS} 字以内，再继续这轮练习会更稳。`);
+      return;
+    }
+
     setResumeInput((current) => ({
       ...current,
       edited_text: resumeText,
@@ -514,6 +537,11 @@ export default function CustomInterviewPage() {
   function confirmJdText() {
     if (!jdText.trim()) {
       setJdInputError("请先补齐岗位 JD 内容，再确认。");
+      return;
+    }
+
+    if (jdText.trim().length > LIMITS.CUSTOM_TEXT_MAX_CHARS) {
+      setJdInputError(`岗位 JD 先控制在 ${LIMITS.CUSTOM_TEXT_MAX_CHARS} 字以内，再继续这轮练习会更稳。`);
       return;
     }
 
@@ -642,6 +670,11 @@ export default function CustomInterviewPage() {
       return;
     }
 
+    if (resumeText.trim().length > LIMITS.CUSTOM_TEXT_MAX_CHARS || jdText.trim().length > LIMITS.CUSTOM_TEXT_MAX_CHARS) {
+      setError(`简历和岗位 JD 都请先控制在 ${LIMITS.CUSTOM_TEXT_MAX_CHARS} 字以内，再开始解析。`);
+      return;
+    }
+
     if (!resumeInput.confirmed || !jdInput.confirmed) {
       setError("请先确认简历文本和岗位 JD 文本，再开始解析。");
       return;
@@ -747,6 +780,16 @@ export default function CustomInterviewPage() {
   async function handleSubmitAnswer() {
     if (!currentQuestion || !currentAnswer.trim() || !matchSummary || !resumeParsed || !jdParsed) {
       setError("请先写下这一题的回答。");
+      return;
+    }
+
+    if (currentAnswer.trim().length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS) {
+      setError(`这一题的回答先控制在 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 字以内，再继续往下答会更稳。`);
+      return;
+    }
+
+    if (answerHistoryChars(answers, currentAnswer) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
+      setError(`这轮累计回答先控制在 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 字以内，避免历史过长影响后续追问。`);
       return;
     }
 
@@ -878,6 +921,8 @@ export default function CustomInterviewPage() {
           </aside>
         </section>
 
+        <BetaPrivacyNotice mode="custom" />
+
         <section className="custom-header">
           <WorkflowSteps steps={customWorkflow} />
         </section>
@@ -916,6 +961,7 @@ export default function CustomInterviewPage() {
               className="custom-textarea"
               value={resumeText}
               onChange={(event) => handleResumeTextChange(event.target.value)}
+              maxLength={LIMITS.CUSTOM_TEXT_MAX_CHARS}
               placeholder="把与你目标岗位最相关的经历、项目、结果、职责边界贴进来。"
               rows={12}
               disabled={hasStartedInterview}
@@ -946,6 +992,7 @@ export default function CustomInterviewPage() {
               className="custom-textarea"
               value={jdText}
               onChange={(event) => handleJdTextChange(event.target.value)}
+              maxLength={LIMITS.CUSTOM_TEXT_MAX_CHARS}
               placeholder="把目标岗位的职责、要求、加分项直接贴进来。"
               rows={12}
               disabled={hasStartedInterview}
@@ -1177,6 +1224,7 @@ export default function CustomInterviewPage() {
                   className="custom-textarea is-answer"
                   value={currentAnswer}
                   onChange={(event) => setCurrentAnswer(event.target.value)}
+                  maxLength={LIMITS.INTERVIEW_ANSWER_MAX_CHARS}
                   placeholder="先像真实面试一样讲，不用追求完美。把这题最关键的背景、动作、判断和结果写出来。"
                   rows={8}
                   disabled={interviewState === "thinking"}

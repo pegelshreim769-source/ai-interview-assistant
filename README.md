@@ -194,3 +194,68 @@ Interview Lab 的底层原则很简单，但我很在意：
 ```bash
 npm install
 npm run dev
+```
+
+## Beta 试用说明
+
+- 这是一个小范围 Beta 版本，适合少量同学试用和收集反馈。
+- 推荐优先体验 3 个主流程：文字练习、模拟面试、定制面试。
+- 文字练习和定制面试都遵循同一原则：先基于真实信息继续追问，再决定是否整理成可练习版本。
+- 如果输入信息明显不足，系统会优先追问，不会替你补编经历、数据、结果或职责边界。
+- 当前已加入基础安全限制：
+  - 单次文字练习回答上限：6000 字
+  - 单次补充信息上限：3000 字
+  - 简历 / JD 文本上限：12000 字
+  - 语音 / 上传文件上限：4MB
+
+## 隐私与数据说明
+
+- Beta 阶段请不要输入或上传高敏感信息，例如身份证号、详细住址、银行信息、公司机密或未公开业务数据。
+- 文字回答、定制面试材料和语音转写内容会发送给配置好的 AI / ASR 服务完成分析或转写。
+- 历史记录默认只保存在当前浏览器本地存储中；清除浏览器站点数据后，这些记录会一起移除。
+- 服务器会话同步默认关闭。只有在显式设置 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=true` 时，前端才会尝试和 `/api/sessions/*` 同步。
+- 项目原则保持不变：只基于用户提供的真实信息继续追问和整理表达，不补编项目经历和结果。
+
+## 部署说明
+
+1. 复制环境变量模板：
+
+```bash
+cp .env.example .env.local
+```
+
+2. 至少配置以下变量：
+
+```bash
+OPENAI_API_KEY=your_chat_api_key_here
+OPENAI_BASE_URL=https://api.moonshot.cn/v1
+OPENAI_MODEL=kimi-k2.5
+
+DASHSCOPE_API_KEY=your_asr_api_key_here
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_ASR_MODEL=qwen3-asr-flash
+
+NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false
+```
+
+3. 生产构建：
+
+```bash
+npm run build
+npm run start
+```
+
+4. Beta 部署建议：
+
+- 先保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`
+- 先不要接入额外埋点、数据库或账号体系
+- 优先用一套稳定的模型配置跑通核心练习链路
+- 部署前确认服务端环境里已经配置好 AI 与语音转写所需 Key
+
+## 已知限制
+
+- 模拟面试语音链路依赖浏览器麦克风权限和当前转写服务，弱网络或浏览器兼容性问题会影响体验。
+- 历史记录当前以本地存储为主，不同浏览器或不同设备之间不会自动同步。
+- 上传文件与语音文件目前只做基础大小限制和文本提取，不适合超大文件或复杂排版文档。
+- 这是 Beta 版，提示词、追问质量和定制面试稳定性还在继续打磨中。
+- 如果 AI 服务或转写服务不可用，页面会直接返回错误提示，不会自动降级到完整离线模式。

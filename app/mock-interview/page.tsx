@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { BetaPrivacyNotice } from "../components/beta-privacy-notice";
 import { PracticeLayout } from "../components/practice-layout";
 import { WorkflowSteps } from "../components/workflow-steps";
 import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
+import { LIMITS } from "../lib/shared/limits";
 import {
   readMockSessions,
   readRecognitionLanguage,
@@ -228,6 +230,10 @@ function recognitionLabel(language: RecognitionLanguage) {
   return "简中识别";
 }
 
+function totalHistoryChars(messages: InterviewMessage[]) {
+  return messages.reduce((sum, message) => sum + message.content.trim().length, 0);
+}
+
 export default function MockInterviewPage() {
   const [sessionId, setSessionId] = useState("");
   const [interviewState, setInterviewState] = useState<InterviewState>("idle");
@@ -415,6 +421,11 @@ export default function MockInterviewPage() {
   async function transcribeAudio(audioBlob: Blob) {
     const extension = audioBlob.type.includes("mp4") ? "m4a" : audioBlob.type.includes("ogg") ? "ogg" : "webm";
     const file = new File([audioBlob], `mock-answer.${extension}`, { type: audioBlob.type || "audio/webm" });
+
+    if (file.size > LIMITS.AUDIO_FILE_MAX_BYTES) {
+      throw new Error("这段录音有点大了，请控制在 4MB 以内后再试。");
+    }
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("language", recognitionLanguage);
@@ -617,6 +628,12 @@ export default function MockInterviewPage() {
   }
 
   async function submitAnswer(transcript: string) {
+    if (transcript.length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS) {
+      setInterviewState("reviewing_answer");
+      setError(`这段回答先控制在 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 字以内，再继续这一轮会更稳。`);
+      return;
+    }
+
     const nextUserMessage: InterviewMessage = {
       id: createId("user"),
       role: "user",
@@ -625,6 +642,13 @@ export default function MockInterviewPage() {
     };
 
     const nextHistory = [...messages, nextUserMessage];
+
+    if (totalHistoryChars(nextHistory) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
+      setInterviewState("reviewing_answer");
+      setError(`这一轮累计内容先控制在 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 字以内，避免历史过长影响追问质量。`);
+      return;
+    }
+
     setMessages(nextHistory);
     setInterviewState("ai_thinking");
     setVoiceStatus("正在根据这一轮回答判断要继续追问，还是先帮你收住这一轮。");
@@ -770,6 +794,11 @@ export default function MockInterviewPage() {
     const transcript = transcribedAnswer.trim();
     if (!transcript) {
       setError("请先确认转写结果，或重新录音。");
+      return;
+    }
+
+    if (transcript.length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS) {
+      setError(`这段回答先控制在 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 字以内，再继续这一轮会更稳。`);
       return;
     }
 
@@ -1003,6 +1032,8 @@ export default function MockInterviewPage() {
           </aside>
         </section>
 
+        <BetaPrivacyNotice mode="mock" />
+
         <section className="mock-header">
           <WorkflowSteps steps={mockWorkflow} />
         </section>
@@ -1062,6 +1093,7 @@ export default function MockInterviewPage() {
                       className="mock-transcript-editor"
                       value={transcribedAnswer}
                       onChange={(event) => setTranscribedAnswer(event.target.value)}
+                      maxLength={LIMITS.INTERVIEW_ANSWER_MAX_CHARS}
                       placeholder="这里会显示转写结果，你也可以手动修改后再提交。"
                       rows={6}
                     />

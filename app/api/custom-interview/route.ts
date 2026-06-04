@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { LIMITS } from "../../lib/shared/limits";
 import type {
   CustomInterviewDebugTrace,
   CustomInterviewDifficulty,
@@ -141,6 +142,10 @@ const METRIC_REGEX = /(\d+(?:\.\d+)?\s?(?:%|倍|天|周|月|年|万|亿|人|次)
 
 function normalizeText(input: string) {
   return input.replace(/\r/g, "").trim();
+}
+
+function totalAnswerChars(answers: Array<string | { content?: string }>) {
+  return answers.reduce((sum, answer) => sum + (typeof answer === "string" ? answer.length : answer.content?.length || 0), 0);
 }
 
 function splitUnits(input: string) {
@@ -596,6 +601,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "请先提供简历内容。" }, { status: 400 });
       }
 
+      if (body.resume_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS) {
+        return NextResponse.json({ error: `简历文本最多支持 ${LIMITS.CUSTOM_TEXT_MAX_CHARS} 个字符，请删减后再试。` }, { status: 400 });
+      }
+
       return NextResponse.json({ resume_parsed: await parseResumeNode(body.resume_text) });
     }
 
@@ -604,16 +613,42 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "请先粘贴岗位 JD。" }, { status: 400 });
       }
 
+      if (body.jd_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS) {
+        return NextResponse.json({ error: `岗位 JD 最多支持 ${LIMITS.CUSTOM_TEXT_MAX_CHARS} 个字符，请删减后再试。` }, { status: 400 });
+      }
+
       return NextResponse.json({ jd_parsed: await parseJdNode(body.jd_text) });
     }
 
     if (body.action === "build_match_summary") {
+      if (
+        body.resume_parsed?.raw_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS ||
+        body.jd_parsed?.raw_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS
+      ) {
+        return NextResponse.json({ error: "简历或 JD 内容过长，请删减后再生成岗位摘要。" }, { status: 400 });
+      }
+
       return NextResponse.json({
         match_summary: await buildMatchSummaryNode(body.resume_parsed, body.jd_parsed)
       });
     }
 
     if (body.action === "run_custom_interview") {
+      if (
+        body.resume_parsed?.raw_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS ||
+        body.jd_parsed?.raw_text.length > LIMITS.CUSTOM_TEXT_MAX_CHARS
+      ) {
+        return NextResponse.json({ error: "简历或 JD 内容过长，请删减后再继续这一轮定制面试。" }, { status: 400 });
+      }
+
+      if ((body.latest_answer?.length || 0) > LIMITS.INTERVIEW_ANSWER_MAX_CHARS) {
+        return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
+      }
+
+      if (totalAnswerChars(body.answers || []) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
+        return NextResponse.json({ error: `当前这轮回答内容过长，最多支持 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 个字符。请新建一轮继续练习。` }, { status: 400 });
+      }
+
       return NextResponse.json(await runCustomInterviewNode(body));
     }
 

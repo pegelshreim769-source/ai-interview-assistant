@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
+import { LIMITS } from "../../lib/shared/limits";
 
 const DECISION_PROMPT_TEMPLATE = `你现在是一位经验丰富、真实、克制的产品经理面试教练。
 
@@ -256,6 +257,14 @@ export async function POST(request: Request) {
 
     if (!answer) {
       return NextResponse.json({ error: "请输入候选人回答内容。" }, { status: 400 });
+    }
+
+    if (answer.length > LIMITS.ANALYZE_ANSWER_MAX_CHARS) {
+      return NextResponse.json({ error: `回答最多支持 ${LIMITS.ANALYZE_ANSWER_MAX_CHARS} 个字符，请删减后再试。` }, { status: 400 });
+    }
+
+    if (supplement && supplement.length > LIMITS.ANALYZE_SUPPLEMENT_MAX_CHARS) {
+      return NextResponse.json({ error: `补充信息最多支持 ${LIMITS.ANALYZE_SUPPLEMENT_MAX_CHARS} 个字符，请删减后再试。` }, { status: 400 });
     }
 
     const mergedAnswer = supplement ? `${answer}\n\n【用户后续补充】\n${supplement}` : answer;

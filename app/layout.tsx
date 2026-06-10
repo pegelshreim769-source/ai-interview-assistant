@@ -29,8 +29,8 @@ const themeInitScript = `
 `;
 
 export const metadata: Metadata = {
-  title: "AI面试助手",
-  description: "为面试回答提供结构化反馈、优化建议与示例答案。"
+  title: "Interview Studio",
+  description: "Interview Studio 帮你在真实面试语境里练习回答、继续追问并讲清楚真实经历。"
 };
 
 export default function RootLayout({

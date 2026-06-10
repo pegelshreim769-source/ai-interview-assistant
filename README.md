@@ -1,8 +1,8 @@
-# Interview Lab
+# Interview Studio
 
 > 从“我做过”到“我讲清楚了”。
 
-Interview Lab 是一个为面试场景设计的 AI 练习工具。  
+Interview Studio 是一个为面试场景设计的 AI 练习工具。  
 它不想替你编一个漂亮答案，也不想把你训练成模板选手。
 
 它更想做的是：
@@ -25,13 +25,13 @@ Interview Lab 是一个为面试场景设计的 AI 练习工具。
 
 > **如何把真实经历转化成高质量的面试表达。**
 
-于是我做了 Interview Lab。
+于是我做了 Interview Studio。
 
 ---
 
 ## 它不是一个什么产品？
 
-Interview Lab **不是**：
+Interview Studio **不是**：
 
 - AI 代写器
 - 简历夸大器
@@ -47,7 +47,7 @@ Interview Lab **不是**：
 
 ## 它是一个什么产品？
 
-Interview Lab 是一个面向求职者的 **AI 面试练习工具**，核心功能包括：
+Interview Studio 是一个面向求职者的 **AI 面试练习工具**，核心功能包括：
 
 ### 1. 文字练习
 用户先写下“自己现在会怎么回答”，系统会：
@@ -82,7 +82,7 @@ Interview Lab 是一个面向求职者的 **AI 面试练习工具**，核心功�
 
 ## 设计原则
 
-Interview Lab 的底层原则很简单，但我很在意：
+Interview Studio 的底层原则很简单，但我很在意：
 
 ### 1. 不补编
 如果用户没说，就不能乱写。
@@ -159,7 +159,7 @@ Interview Lab 的底层原则很简单，但我很在意：
 - 被误判
 - 明明有经历，但没有被听见
 
-如果 Interview Lab 能帮用户减少一点这种损耗，  
+如果 Interview Studio 能帮用户减少一点这种损耗，  
 那它就不是一个只会“生成答案”的工具，而是一个真的有用的产品。
 
 ---

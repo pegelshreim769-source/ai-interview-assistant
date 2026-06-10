@@ -645,6 +645,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
       }
 
+      if ((body.answers || []).some((answer) => answer.length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS)) {
+        return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
+      }
+
       if (totalAnswerChars(body.answers || []) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
         return NextResponse.json({ error: `当前这轮回答内容过长，最多支持 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 个字符。请新建一轮继续练习。` }, { status: 400 });
       }

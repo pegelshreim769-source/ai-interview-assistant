@@ -197,11 +197,11 @@ export function PracticeLayout({
         <div className="sidebar-top">
           <div className="sidebar-brand">
             <div className="sidebar-logo">
-              <BrandLogo className="brand-logo-mark" title="Interview Lab" />
+              <BrandLogo className="brand-logo-mark" title="Interview Studio" />
             </div>
             {!collapsed ? (
               <div>
-                <p className="brand-name sidebar-brand-name">INTERVIEW LAB</p>
+                <p className="brand-name sidebar-brand-name">INTERVIEW STUDIO</p>
                 <p className="sidebar-brand-copy">像真实面试一样，一轮一轮讲顺。</p>
               </div>
             ) : null}

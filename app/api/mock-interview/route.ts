@@ -268,6 +268,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
     }
 
+    if (history.some((turn) => turn.role === "user" && turn.kind === "answer" && turn.content.trim().length > LIMITS.INTERVIEW_ANSWER_MAX_CHARS)) {
+      return NextResponse.json({ error: `单次回答最多支持 ${LIMITS.INTERVIEW_ANSWER_MAX_CHARS} 个字符，请缩短后再试。` }, { status: 400 });
+    }
+
     if (historyCharCount(history) > LIMITS.INTERVIEW_HISTORY_MAX_CHARS) {
       return NextResponse.json({ error: `当前这轮对话内容过长，最多支持 ${LIMITS.INTERVIEW_HISTORY_MAX_CHARS} 个字符。请新开一轮继续练习。` }, { status: 400 });
     }

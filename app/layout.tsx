@@ -15,7 +15,7 @@ const themeInitScript = `
       const accent =
         storedAccent === "blue" || storedAccent === "teal" || storedAccent === "amber" || storedAccent === "coral" || storedAccent === "white"
           ? storedAccent
-          : "blue";
+          : "white";
       const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       root.dataset.themePreference = preference;
       root.dataset.theme = preference === "system" ? (isDark ? "dark" : "light") : preference;
@@ -23,7 +23,7 @@ const themeInitScript = `
     } catch {
       document.documentElement.dataset.themePreference = "system";
       document.documentElement.dataset.theme = "light";
-      document.documentElement.dataset.accent = "blue";
+      document.documentElement.dataset.accent = "white";
     }
   })();
 `;

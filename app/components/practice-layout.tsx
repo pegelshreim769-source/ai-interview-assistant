@@ -97,13 +97,13 @@ function readThemePreference(): ThemePreference {
 }
 
 function readAccentTone(): AccentTone {
-  if (typeof window === "undefined") return "blue";
+  if (typeof window === "undefined") return "white";
 
   try {
     const stored = window.localStorage.getItem(ACCENT_STORAGE_KEY);
-    return stored === "blue" || stored === "teal" || stored === "amber" || stored === "coral" || stored === "white" ? stored : "blue";
+    return stored === "blue" || stored === "teal" || stored === "amber" || stored === "coral" || stored === "white" ? stored : "white";
   } catch {
-    return "blue";
+    return "white";
   }
 }
 
@@ -129,7 +129,7 @@ export function PracticeLayout({
 }: PracticeLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
-  const [accentTone, setAccentTone] = useState<AccentTone>("blue");
+  const [accentTone, setAccentTone] = useState<AccentTone>("white");
   const modeDetail = MODE_DETAILS[mode];
   const sortedHistoryItems = [...historyItems].sort((left, right) => {
     if (left.status === "in_progress" && right.status !== "in_progress") return -1;

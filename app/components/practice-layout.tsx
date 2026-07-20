@@ -1,12 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type ReactNode } from "react";
+import Image from "next/image";
+import {
+  BookOpenText,
+  Briefcase,
+  CaretDown,
+  Check,
+  ClockCounterClockwise,
+  FileText,
+  FolderSimple,
+  Plus,
+  SlidersHorizontal,
+  TextT,
+  VideoCamera
+} from "@phosphor-icons/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BrandLogo } from "./brand-logo";
 
-type PracticeMode = "text" | "mock" | "custom";
-type ThemePreference = "system" | "light" | "dark";
-type AccentTone = "blue" | "teal" | "amber" | "coral" | "white";
+type PracticeMode = "text" | "mock" | "custom" | "resume";
 type SidebarHistoryItem = {
   id: string;
   title: string;
@@ -27,96 +39,6 @@ type PracticeLayoutProps = {
   shortcutsDisabled?: boolean;
 };
 
-const MODE_DETAILS: Record<
-  PracticeMode,
-  {
-    label: string;
-    short: string;
-    goal: string;
-    rhythm: string[];
-  }
-> = {
-  text: {
-    label: "文字练习",
-    short: "文",
-    goal: "先把真实经历讲清楚，再进入可直接开口练的一版。",
-    rhythm: ["第一版", "找卡点", "补信息", "开口练"]
-  },
-  mock: {
-    label: "模拟面试",
-    short: "模",
-    goal: "像真实面试一样一问一答，训练追问和回答节奏。",
-    rhythm: ["进入一轮", "听题", "回答", "小结"]
-  },
-  custom: {
-    label: "定制面试",
-    short: "定",
-    goal: "按简历和岗位交集来练，优先压实最可能被追问的点。",
-    rhythm: ["准备材料", "briefing", "岗位问答", "复盘"]
-  }
-};
-
-const THEME_STORAGE_KEY = "interview-lab-theme";
-const ACCENT_STORAGE_KEY = "interview-lab-accent";
-const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; short: string }> = [
-  { value: "system", label: "跟随系统", short: "系" },
-  { value: "light", label: "浅色", short: "浅" },
-  { value: "dark", label: "深色", short: "深" }
-];
-const ACCENT_OPTIONS: Array<{ value: AccentTone; label: string; swatchClassName: string }> = [
-  { value: "blue", label: "雾蓝", swatchClassName: "is-blue" },
-  { value: "teal", label: "青岚", swatchClassName: "is-teal" },
-  { value: "amber", label: "琥珀", swatchClassName: "is-amber" },
-  { value: "coral", label: "珊瑚", swatchClassName: "is-coral" },
-  { value: "white", label: "白系", swatchClassName: "is-white" }
-];
-
-function resolveTheme(preference: ThemePreference, isSystemDark: boolean) {
-  return preference === "system" ? (isSystemDark ? "dark" : "light") : preference;
-}
-
-function applyAppearance(preference: ThemePreference, accentTone: AccentTone) {
-  if (typeof window === "undefined") return;
-
-  const root = document.documentElement;
-  const isSystemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  root.dataset.themePreference = preference;
-  root.dataset.theme = resolveTheme(preference, isSystemDark);
-  root.dataset.accent = accentTone;
-}
-
-function readThemePreference(): ThemePreference {
-  if (typeof window === "undefined") return "system";
-
-  try {
-    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-    return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
-  } catch {
-    return "system";
-  }
-}
-
-function readAccentTone(): AccentTone {
-  if (typeof window === "undefined") return "white";
-
-  try {
-    const stored = window.localStorage.getItem(ACCENT_STORAGE_KEY);
-    return stored === "blue" || stored === "teal" || stored === "amber" || stored === "coral" || stored === "white" ? stored : "white";
-  } catch {
-    return "white";
-  }
-}
-
-function MenuIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <span className={`sidebar-toggle-lines ${collapsed ? "is-collapsed" : ""}`} aria-hidden="true">
-      <i />
-      <i />
-      <i />
-    </span>
-  );
-}
-
 export function PracticeLayout({
   mode,
   children,
@@ -127,10 +49,10 @@ export function PracticeLayout({
   onSelectHistory,
   shortcutsDisabled = false
 }: PracticeLayoutProps) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
-  const [accentTone, setAccentTone] = useState<AccentTone>("white");
-  const modeDetail = MODE_DETAILS[mode];
+  const collapsed = false;
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const resumeWorkspaceActive = mode === "resume";
   const sortedHistoryItems = [...historyItems].sort((left, right) => {
     if (left.status === "in_progress" && right.status !== "in_progress") return -1;
     if (left.status !== "in_progress" && right.status === "in_progress") return 1;
@@ -149,50 +71,28 @@ export function PracticeLayout({
   }
 
   useEffect(() => {
-    const nextPreference = readThemePreference();
-    const nextAccentTone = readAccentTone();
-    setThemePreference(nextPreference);
-    setAccentTone(nextAccentTone);
-    applyAppearance(nextPreference, nextAccentTone);
+    if (!workspaceMenuOpen) return;
 
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handleSystemThemeChange = () => {
-      if (readThemePreference() === "system") {
-        applyAppearance("system", readAccentTone());
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false);
       }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setWorkspaceMenuOpen(false);
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
     };
-
-    if (typeof mediaQuery.addEventListener === "function") {
-      mediaQuery.addEventListener("change", handleSystemThemeChange);
-      return () => mediaQuery.removeEventListener("change", handleSystemThemeChange);
-    }
-
-    mediaQuery.addListener(handleSystemThemeChange);
-    return () => mediaQuery.removeListener(handleSystemThemeChange);
-  }, []);
-
-  function updateThemePreference(nextPreference: ThemePreference) {
-    setThemePreference(nextPreference);
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, nextPreference);
-    } catch {
-      // Ignore storage failures and still apply the in-memory theme.
-    }
-    applyAppearance(nextPreference, accentTone);
-  }
-
-  function updateAccentTone(nextAccentTone: AccentTone) {
-    setAccentTone(nextAccentTone);
-    try {
-      window.localStorage.setItem(ACCENT_STORAGE_KEY, nextAccentTone);
-    } catch {
-      // Ignore storage failures and still apply the in-memory accent.
-    }
-    applyAppearance(themePreference, nextAccentTone);
-  }
+  }, [workspaceMenuOpen]);
 
   return (
-    <div className={`app-shell mode-${mode} ${collapsed ? "is-collapsed" : ""}`}>
+    <div className={`app-shell is-modern-workspace mode-${mode} ${collapsed ? "is-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="sidebar-top">
           <div className="sidebar-brand">
@@ -207,51 +107,100 @@ export function PracticeLayout({
             ) : null}
           </div>
 
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setCollapsed((current) => !current)}
-            aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-            title={collapsed ? "展开侧边栏" : "收起侧边栏"}
-          >
-            <MenuIcon collapsed={collapsed} />
-          </button>
-        </div>
+          <div className="workspace-switcher workspace-switcher-compact" ref={workspaceMenuRef}>
+            <button
+              type="button"
+              className={`workspace-switcher-button ${workspaceMenuOpen ? "is-open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={workspaceMenuOpen}
+              aria-label={`当前工作区：${resumeWorkspaceActive ? "简历工作台" : "面试 Lab"}`}
+              title="切换工作区"
+              onClick={() => setWorkspaceMenuOpen((current) => !current)}
+            >
+              <span className="workspace-switcher-icon" aria-hidden="true">
+                {resumeWorkspaceActive ? <FileText size={19} weight="duotone" /> : <Briefcase size={19} weight="duotone" />}
+              </span>
+              <span className="workspace-switcher-label">{resumeWorkspaceActive ? "简历工作台" : "面试 Lab"}</span>
+              <CaretDown className="workspace-switcher-caret" size={15} weight="bold" aria-hidden="true" />
+            </button>
 
-        <div className="sidebar-section">
-          {!collapsed ? <p className="sidebar-section-title">模式切换</p> : null}
-          <nav className="sidebar-nav">
-            <Link href="/" className={`sidebar-nav-item ${mode === "text" ? "is-active" : ""}`} title="文字练习">
-              <span className="sidebar-nav-icon">文</span>
-              {!collapsed ? <span>文字练习</span> : null}
-            </Link>
-            <Link href="/mock-interview" className={`sidebar-nav-item ${mode === "mock" ? "is-active" : ""}`} title="模拟面试">
-              <span className="sidebar-nav-icon">模</span>
-              {!collapsed ? <span>模拟面试</span> : null}
-            </Link>
-            <Link href="/custom-interview" className={`sidebar-nav-item ${mode === "custom" ? "is-active" : ""}`} title="定制面试">
-              <span className="sidebar-nav-icon">定</span>
-              {!collapsed ? <span>定制面试</span> : null}
-            </Link>
-          </nav>
+            {workspaceMenuOpen ? (
+              <div className="workspace-switcher-menu" role="menu" aria-label="切换工作区">
+                <Link
+                  href="/"
+                  role="menuitem"
+                  className={`workspace-switcher-option ${!resumeWorkspaceActive ? "is-current" : ""}`}
+                  aria-current={!resumeWorkspaceActive ? "page" : undefined}
+                  onClick={() => setWorkspaceMenuOpen(false)}
+                >
+                  <Briefcase className="workspace-option-icon" size={21} weight="duotone" aria-hidden="true" />
+                  <span className="workspace-option-copy">
+                    <strong>面试 Lab</strong>
+                    <small>文字、模拟与定制面试</small>
+                  </span>
+                  {!resumeWorkspaceActive ? <Check className="workspace-option-check" size={21} weight="bold" aria-hidden="true" /> : null}
+                </Link>
+                <Link
+                  href="/resume-studio"
+                  role="menuitem"
+                  className={`workspace-switcher-option ${resumeWorkspaceActive ? "is-current" : ""}`}
+                  aria-current={resumeWorkspaceActive ? "page" : undefined}
+                  onClick={() => setWorkspaceMenuOpen(false)}
+                >
+                  <FileText className="workspace-option-icon" size={21} weight="duotone" aria-hidden="true" />
+                  <span className="workspace-option-copy">
+                    <strong>简历工作台</strong>
+                    <small>事实核对、岗位定制与面试衔接</small>
+                  </span>
+                  {resumeWorkspaceActive ? <Check className="workspace-option-check" size={21} weight="bold" aria-hidden="true" /> : null}
+                </Link>
+                <div className="workspace-mobile-mode-links" aria-label="面试 Lab 练习模式">
+                  <Link href="/" onClick={() => setWorkspaceMenuOpen(false)}>文字练习</Link>
+                  <Link href="/mock-interview" onClick={() => setWorkspaceMenuOpen(false)}>模拟面试</Link>
+                  <Link href="/custom-interview" onClick={() => setWorkspaceMenuOpen(false)}>定制面试</Link>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {!collapsed ? (
-          <div className="sidebar-section">
-            <div className={`sidebar-mode-card is-${mode}`}>
-              <p className="sidebar-mode-eyebrow">当前模式</p>
-              <h2 className="sidebar-mode-title">{modeDetail.label}</h2>
-              <p className="sidebar-mode-copy">{modeDetail.goal}</p>
-              <div className="sidebar-mode-flow" aria-hidden="true">
-                {modeDetail.rhythm.map((item) => (
-                  <span key={item} className="sidebar-mode-chip">
-                    {item}
-                  </span>
-                ))}
-              </div>
+          <div className="resume-sidebar-profile">
+            <Image src="/resume-studio/student-avatar.png" alt="面试练习者头像" width={48} height={48} priority unoptimized />
+            <div>
+              <strong>你好，面试练习者</strong>
+              <span>今天也要加油！</span>
             </div>
           </div>
         ) : null}
+
+        <div className="sidebar-section">
+          {!collapsed ? <p className="sidebar-section-title">{resumeWorkspaceActive ? "当前工作区" : "练习模式"}</p> : null}
+          <nav className="sidebar-nav">
+            {resumeWorkspaceActive ? (
+              <Link href="/resume-studio" className="sidebar-nav-item is-active" title="简历工作台">
+                <FileText className="sidebar-nav-svg" size={19} weight="duotone" aria-hidden="true" />
+                {!collapsed ? <span>简历工作台</span> : null}
+              </Link>
+            ) : null}
+            {!resumeWorkspaceActive ? (
+              <>
+                <Link href="/" className={`sidebar-nav-item ${mode === "text" ? "is-active" : ""}`} title="文字练习">
+                  <TextT className="sidebar-nav-svg" size={19} aria-hidden="true" />
+                  {!collapsed ? <span>文字练习</span> : null}
+                </Link>
+                <Link href="/mock-interview" className={`sidebar-nav-item ${mode === "mock" ? "is-active" : ""}`} title="模拟面试">
+                  <VideoCamera className="sidebar-nav-svg" size={19} aria-hidden="true" />
+                  {!collapsed ? <span>模拟面试</span> : null}
+                </Link>
+                <Link href="/custom-interview" className={`sidebar-nav-item ${mode === "custom" ? "is-active" : ""}`} title="定制面试">
+                  <SlidersHorizontal className="sidebar-nav-svg" size={19} aria-hidden="true" />
+                  {!collapsed ? <span>定制面试</span> : null}
+                </Link>
+              </>
+            ) : null}
+          </nav>
+        </div>
 
         <div className="sidebar-section sidebar-history-section">
           {!collapsed ? <p className="sidebar-section-title">快捷入口</p> : null}
@@ -263,7 +212,7 @@ export function PracticeLayout({
               disabled={!onTryExample || shortcutsDisabled}
               title="试试示例"
             >
-              <span className="sidebar-nav-icon">例</span>
+              <BookOpenText className="sidebar-nav-svg" size={18} aria-hidden="true" />
               {!collapsed ? <span>试试示例</span> : null}
             </button>
             <button
@@ -273,7 +222,7 @@ export function PracticeLayout({
               disabled={!onNewRound || shortcutsDisabled}
               title="新建一轮"
             >
-              <span className="sidebar-nav-icon">新</span>
+              <Plus className="sidebar-nav-svg" size={18} aria-hidden="true" />
               {!collapsed ? <span>新建一轮</span> : null}
             </button>
             <button
@@ -283,13 +232,13 @@ export function PracticeLayout({
               disabled={!onContinueLatest || shortcutsDisabled}
               title="继续上一轮"
             >
-              <span className="sidebar-nav-icon">续</span>
+              <ClockCounterClockwise className="sidebar-nav-svg" size={18} aria-hidden="true" />
               {!collapsed ? <span>继续上一轮</span> : null}
             </button>
           </div>
         </div>
 
-        <div className="sidebar-section">
+        <div className="sidebar-section sidebar-history-records">
           {!collapsed ? <p className="sidebar-section-title">历史记录</p> : null}
           {collapsed ? (
             <div className="sidebar-history-collapsed">
@@ -329,46 +278,18 @@ export function PracticeLayout({
             <p className="sidebar-note is-collapsed">真</p>
           )}
         </div>
+
+        {!collapsed ? (
+          <div className="resume-sidebar-upgrade">
+            <FolderSimple size={22} weight="duotone" aria-hidden="true" />
+            <strong>{resumeWorkspaceActive ? "真实经历优先" : "真实表达优先"}</strong>
+            <p>{resumeWorkspaceActive ? "所有改写都需要事实证据，缺口会单独提示。" : "所有追问只基于你的真实经历，不补编项目与结果。"}</p>
+          </div>
+        ) : null}
       </aside>
 
       <main className="app-main">
-        <div className="app-main-toolbar">
-          <div className="appearance-dock" role="group" aria-label="界面外观设置">
-            <div className="appearance-group" role="radiogroup" aria-label="界面主题">
-              {THEME_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  className={`appearance-mode-button ${themePreference === option.value ? "is-active" : ""}`}
-                  aria-checked={themePreference === option.value}
-                  onClick={() => updateThemePreference(option.value)}
-                  title={option.label}
-                  aria-label={option.label}
-                >
-                  <span className="appearance-mode-short">{option.short}</span>
-                </button>
-              ))}
-            </div>
-            <span className="appearance-divider" aria-hidden="true" />
-            <div className="appearance-group appearance-tone-group" role="radiogroup" aria-label="界面色系">
-              {ACCENT_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  className={`appearance-swatch ${accentTone === option.value ? "is-active" : ""}`}
-                  aria-checked={accentTone === option.value}
-                  onClick={() => updateAccentTone(option.value)}
-                  title={option.label}
-                  aria-label={`切换到${option.label}色系`}
-                >
-                  <span className={`appearance-swatch-dot ${option.swatchClassName}`} />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <div className="app-main-toolbar" aria-hidden="true" />
         {children}
       </main>
     </div>

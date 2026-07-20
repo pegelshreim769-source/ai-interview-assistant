@@ -6,6 +6,7 @@ import { PracticeLayout } from "../components/practice-layout";
 import { WorkflowSteps } from "../components/workflow-steps";
 import { fetchSyncedSessions, upsertSyncedSession } from "../lib/client/session-sync";
 import { LIMITS } from "../lib/shared/limits";
+import { consumeResumeStudioInterviewHandoff } from "../lib/resume-studio/storage";
 import {
   type CustomInterviewDebugTrace,
   readCustomSessions,
@@ -273,6 +274,52 @@ export default function CustomInterviewPage() {
 
   useEffect(() => {
     void loadSessions();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("source") !== "resume-studio") return;
+
+    const handoff = consumeResumeStudioInterviewHandoff();
+    if (!handoff) return;
+
+    setSessionId(createId("custom-interview"));
+    setInterviewState("draft");
+    setResumeText(handoff.resume_text);
+    setJdText(handoff.jd_text);
+    setResumeInput({
+      input_type: "text",
+      original_file_name: "",
+      extracted_text: handoff.resume_text,
+      edited_text: handoff.resume_text,
+      parse_source: "resume_studio_final",
+      confirmed: true
+    });
+    setJdInput({
+      input_type: "text",
+      original_file_name: "",
+      extracted_text: handoff.jd_text,
+      edited_text: handoff.jd_text,
+      parse_source: "resume_studio_handoff",
+      confirmed: true
+    });
+    setResumeParsed(null);
+    setJdParsed(null);
+    setMatchSummary(null);
+    setQuestions([]);
+    setAnswers([]);
+    setCurrentQuestion(null);
+    setCurrentAnswer("");
+    setFinalReview(null);
+    setDebugTrace(null);
+    setLatestWeakPoint("");
+    setStatusMessage("已从简历工作台带入确认后的完整简历和目标 JD，可以直接生成岗位 briefing。");
+    setResumeInputMessage("已带入简历工作台确认后的完整文本简历。");
+    setJdInputMessage("已带入简历工作台中的目标 JD。");
+    setResumeInputError("");
+    setJdInputError("");
+    setError("");
+    window.history.replaceState({}, "", "/custom-interview");
   }, []);
 
   useEffect(() => {

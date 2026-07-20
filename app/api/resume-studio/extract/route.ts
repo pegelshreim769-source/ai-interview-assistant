@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const file = formData.get("file");
 
     if (kind !== "resume" && kind !== "jd_image") {
-      return NextResponse.json({ error: "不支持的提取类型。" }, { status: 400 });
+      return NextResponse.json({ error: "不支持的简历工作台提取类型。" }, { status: 400 });
     }
 
     if (!(file instanceof File)) {
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json(await extractUploadedMaterial(kind as MaterialExtractKind, file));
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "提取失败，请尝试重新上传，或直接粘贴文本内容。" },
+      { error: error instanceof Error ? error.message : "材料提取失败，请重新上传或直接粘贴文本。" },
       { status: 500 }
     );
   }

@@ -5367,3 +5367,250 @@ textarea {
     align-items: flex-start;
   }
 }
+
+/* Simplified resume workflow and export preview */
+.mode-resume .resume-studio-workflow {
+  grid-template-columns: repeat(5, minmax(156px, 1fr));
+  min-height: 112px;
+}
+
+.resume-studio-export-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.resume-studio-export-actions .primary-button,
+.resume-studio-export-actions .secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.mode-resume .resume-studio-ledger-list.is-compact {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+}
+
+.resume-studio-fact-row {
+  overflow: hidden;
+  border: 1px solid #e6eaf1;
+  border-radius: 11px;
+  background: #ffffff;
+}
+
+.resume-studio-fact-row summary {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 9px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.resume-studio-fact-row summary::-webkit-details-marker {
+  display: none;
+}
+
+.resume-studio-fact-row summary::after {
+  content: "+";
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: #f2f5f9;
+  color: #64738c;
+  font-size: 15px;
+  font-weight: 600;
+  grid-column: 5;
+}
+
+.resume-studio-fact-row[open] summary::after {
+  content: "−";
+  background: #edf2ff;
+  color: #315edc;
+}
+
+.resume-studio-fact-row summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #27354d;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-studio-fact-detail {
+  display: grid;
+  gap: 9px;
+  padding: 0 14px 13px 78px;
+}
+
+.resume-studio-fact-detail blockquote {
+  margin: 0;
+  padding: 9px 11px;
+  border-left: 2px solid #cfd9eb;
+  background: #f7f9fc;
+  color: #65738b;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.resume-studio-ledger-toggle {
+  justify-self: center;
+}
+
+.mode-resume .resume-studio-validation-banner {
+  display: grid;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.mode-resume .resume-studio-validation-banner > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.mode-resume .resume-studio-validation-banner .resume-studio-issue-list {
+  width: 100%;
+}
+
+.resume-export-sheet {
+  width: min(100%, 794px);
+  margin: 0 auto;
+  padding: 54px 60px 62px;
+  border: 1px solid #e3e8ef;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #27354d;
+  box-shadow: 0 14px 34px rgba(42, 64, 103, 0.08);
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+}
+
+.resume-export-header {
+  padding-bottom: 22px;
+  border-bottom: 2px solid #315eea;
+}
+
+.resume-export-header p {
+  margin: 0 0 8px;
+  color: #718098;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.resume-export-header h2 {
+  margin: 0;
+  color: #12213d;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.resume-export-section {
+  padding-top: 24px;
+}
+
+.resume-export-section h3 {
+  margin: 0 0 13px;
+  color: #1f2e48;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.resume-export-section p,
+.resume-export-section li {
+  color: #3b4960;
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.resume-export-section p {
+  margin: 0 0 8px;
+}
+
+.resume-export-capabilities {
+  display: grid;
+  gap: 5px;
+}
+
+.resume-export-experiences {
+  display: grid;
+  gap: 20px;
+}
+
+.resume-export-experience {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.resume-export-experience h4 {
+  margin: 0 0 8px;
+  color: #1f2e48;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.resume-export-experience ul {
+  display: grid;
+  gap: 6px;
+  margin: 9px 0 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 720px) {
+  .mode-resume .resume-studio-workflow {
+    grid-template-columns: repeat(5, 156px);
+  }
+
+  .resume-studio-export-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .resume-studio-export-actions .primary-button,
+  .resume-studio-export-actions .secondary-button {
+    flex: 1 1 140px;
+  }
+
+  .resume-studio-fact-row summary {
+    grid-template-columns: auto auto minmax(0, 1fr);
+  }
+
+  .resume-studio-fact-row summary .resume-studio-mini-pill.is-fixed {
+    display: none;
+  }
+
+  .resume-studio-fact-row summary::after {
+    grid-column: 4;
+  }
+
+  .resume-studio-fact-detail {
+    padding-left: 14px;
+  }
+
+  .resume-export-sheet {
+    padding: 34px 24px 40px;
+  }
+
+  .resume-export-header h2 {
+    font-size: 23px;
+  }
+
+  .mode-resume .resume-studio-validation-banner > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

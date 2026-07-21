@@ -72,3 +72,37 @@ No actionable P0/P1/P2 differences remain.
 No actionable P0/P1/P2 differences remain in this follow-up.
 
 final result: passed
+
+## 精简工作流复核 — 2026-07-21
+
+- Source visual truth: `/var/folders/vc/gdzh6wps7f31n6lwt9bmbw1r0000gn/T/codex-clipboard-26755561-0dab-4415-85e5-e61bec05d54d.png`
+- Desktop screenshot: `/tmp/resume-studio-compact-qa/resume-studio-desktop-full.png`
+- Confirmed-ledger screenshot: `/tmp/resume-studio-compact-qa/resume-studio-facts-desktop.png`
+- Mobile screenshots: `/tmp/resume-studio-compact-qa/resume-studio-mobile.png` and `/tmp/resume-studio-compact-qa/resume-studio-mobile-viewport.png`
+- Side-by-side comparison: `/tmp/resume-studio-compact-qa/resume-studio-qa-comparison.png`
+- Viewports: 1366 × 900 desktop and 390 × 844 mobile
+- States: initial materials, confirmed read-only evidence ledger, generated writing plan
+
+### Findings
+
+No actionable P0/P1/P2 differences remain.
+
+- Information architecture: the workspace shell stays outside the task flow. The page now presents five task steps matching the requested workflow: materials and parsing, evidence ledger, writing plan, rewrite-strategy confirmation, and downloadable delivery.
+- Confirmation behavior: resume and JD corrections are confirmed once. The evidence ledger is generated from that confirmed material and remains read-only, removing the repeated per-fact confirmation loop.
+- Evidence density: the ledger shows six compact one-line summaries by default. Each row expands in place for its excerpt, dates, metrics, and fixed-fact state; a single control reveals the full list.
+- Validation: evidence and metric validation still runs before finalization but no longer appears as a separate user-facing step. Blocking issues remain visible inside the rewrite-strategy stage.
+- Delivery: the final stage exposes copy, PDF, and DOCX actions after the existing authenticity confirmation and keeps the custom-interview handoff.
+- Responsiveness: the document and body widths remain 390px at the mobile viewport; the five-step list is the only horizontally scrollable region (`clientWidth: 372px`, `scrollWidth: 800px`). Cards stack without clipped controls or body-level horizontal overflow.
+- Visual system: the approved warm-white, pale-blue, navy, light-border, and restrained-shadow system is preserved. Existing Phosphor icons and raster brand assets remain unchanged.
+- Accessibility and interaction: evidence rows use native `details/summary`; the full-list control and plan CTA are semantic buttons; final download actions keep disabled states until authenticity is confirmed.
+
+### Interaction Checks
+
+- “试试示例” loads fully fictional resume and JD content.
+- “确认材料并生成事实台账” advances once and produces seven evidence records.
+- The first evidence row expands and reveals its source excerpt and structured fields.
+- “查看全部 7 条事实” switches the compact list from six to seven rows.
+- “生成简历撰写规划” advances successfully to the writing-plan state.
+- Browser console: no application errors.
+
+final result: passed

@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { ArrowRight, FileText, ImageSquare, UploadSimple } from "@phosphor-icons/react";
+import { ArrowRight, CopySimple, FileDoc, FilePdf, FileText, ImageSquare, UploadSimple } from "@phosphor-icons/react";
 import { BetaPrivacyNotice } from "../components/beta-privacy-notice";
 import { PracticeLayout } from "../components/practice-layout";
+import { ResumeDocument } from "../components/resume-document";
 import { WorkflowSteps } from "../components/workflow-steps";
 import { LIMITS } from "../lib/shared/limits";
+import { downloadResumeDocx, downloadResumePdf } from "../lib/resume-studio/export";
 import { RESUME_METHODOLOGY_VERSION } from "../lib/resume-studio/methodology";
 import {
   clearResumeStudioSession,
@@ -18,7 +20,6 @@ import {
 import type {
   ClaimsValidation,
   FactLedger,
-  FactVerificationStatus,
   FinalResume,
   ResumePlan,
   ResumeStudioInputMeta,
@@ -43,7 +44,7 @@ type ApiResponse = {
   error?: string;
 };
 
-type BusyAction = "" | "extract_resume" | "extract_jd" | "facts" | "plan" | "rewrite" | "validate" | "finalize";
+type BusyAction = "" | "extract_resume" | "extract_jd" | "facts" | "plan" | "rewrite" | "finalize";
 type WorkflowStatus = "complete" | "current" | "upcoming";
 
 const SAMPLE_RESUME = `样例候选人（完全虚构）｜产品方向
@@ -113,11 +114,9 @@ function currentStepFromState(
   ledger: FactLedger | null,
   plan: ResumePlan | null,
   rewrites: RewrittenExperience[],
-  validation: ClaimsValidation | null,
   finalResume: FinalResume | null
 ): ResumeStudioStep {
   if (finalResume) return "finalize";
-  if (validation) return "validate";
   if (rewrites.length) return "rewrite";
   if (plan) return "plan";
   if (ledger) return "facts";
@@ -137,6 +136,7 @@ async function postJson(payload: unknown) {
 
 export default function ResumeStudioPage() {
   const router = useRouter();
+  const resumeExportRef = useRef<HTMLDivElement>(null);
   const [sessionId, setSessionId] = useState("");
   const [resumeText, setResumeText] = useState("");
   const [jdText, setJdText] = useState("");
@@ -153,21 +153,27 @@ export default function ResumeStudioPage() {
   const [statusMessage, setStatusMessage] = useState("先上传或粘贴简历与岗位 JD，再从事实台账开始。 ");
   const [hydrated, setHydrated] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [exporting, setExporting] = useState<"" | "pdf" | "docx">("");
+  const [showAllFacts, setShowAllFacts] = useState(false);
 
   const confirmedFacts = factLedger?.items.filter((item) => item.verification_status === "confirmed").length || 0;
-  const pendingFacts = factLedger?.items.filter((item) => item.verification_status === "pending").length || 0;
   const acceptedBullets = rewrites.flatMap((item) => item.bullets).filter((item) => item.decision === "accepted").length;
-  const currentStep = currentStepFromState(factLedger, resumePlan, rewrites, claimsValidation, finalResume);
+  const visibleFactItems = showAllFacts ? factLedger?.items || [] : factLedger?.items.slice(0, 6) || [];
+  const currentStep = currentStepFromState(factLedger, resumePlan, rewrites, finalResume);
 
   useEffect(() => {
     const stored = readResumeStudioSession();
     if (stored) {
+      const restoredLedger = stored.fact_ledger ? {
+        ...stored.fact_ledger,
+        items: stored.fact_ledger.items.map((item) => ({ ...item, verification_status: "confirmed" as const }))
+      } : null;
       setSessionId(stored.session_id);
       setResumeText(stored.resume_text);
       setJdText(stored.jd_text);
       setResumeInput(stored.resume_input);
       setJdInput(stored.jd_input);
-      setFactLedger(stored.fact_ledger);
+      setFactLedger(restoredLedger);
       setResumePlan(stored.resume_plan);
       setRewrites(stored.rewrites || []);
       setClaimsValidation(stored.claims_validation);
@@ -225,37 +231,35 @@ export default function ResumeStudioPage() {
       materials: !!factLedger,
       facts: !!resumePlan,
       plan: rewrites.length > 0,
-      rewrite: !!claimsValidation,
-      validate: !!finalResume,
+      rewrite: !!finalResume,
       finalize: !!finalResume && finalConfirmed
     };
-    const order: ResumeStudioStep[] = ["materials", "facts", "plan", "rewrite", "validate", "finalize"];
+    const order: ResumeStudioStep[] = ["materials", "facts", "plan", "rewrite", "finalize"];
     const statusFor = (step: ResumeStudioStep): WorkflowStatus => {
       if (completed[step as keyof typeof completed]) return "complete";
       return currentStep === step ? "current" : order.indexOf(step) < order.indexOf(currentStep) ? "complete" : "upcoming";
     };
 
     return [
-      { label: "材料", description: "简历与 JD", status: statusFor("materials") },
-      { label: "事实台账", description: `${confirmedFacts} 已确认 · ${pendingFacts} 待确认`, status: statusFor("facts") },
-      { label: "岗位规划", description: resumePlan?.target_role || "经历选择与排序", status: statusFor("plan") },
-      { label: "分段改写", description: `${acceptedBullets} 条已接受`, status: statusFor("rewrite") },
-      { label: "事实校验", description: claimsValidation?.valid ? "已通过" : "证据与指标检查", status: statusFor("validate") },
-      { label: "完整简历", description: finalConfirmed ? "已确认" : "文本版交付", status: statusFor("finalize") },
-      { label: "定制面试", description: finalConfirmed ? "可以开始" : "确认后解锁", status: finalConfirmed ? "current" : "upcoming" as WorkflowStatus }
+      { label: "材料上传与解析", description: "简历与 JD", status: statusFor("materials") },
+      { label: "事实台账", description: factLedger ? `${confirmedFacts} 条证据` : "自动生成证据", status: statusFor("facts") },
+      { label: "简历撰写规划", description: resumePlan?.target_role || "经历选择与排序", status: statusFor("plan") },
+      { label: "改写策略确认", description: claimsValidation?.valid ? "事实校验通过" : `${acceptedBullets} 条已接受`, status: statusFor("rewrite") },
+      { label: "生成并下载", description: finalConfirmed ? "PDF / DOCX" : "核对后下载", status: statusFor("finalize") }
     ];
-  }, [acceptedBullets, claimsValidation, confirmedFacts, currentStep, factLedger, finalConfirmed, finalResume, pendingFacts, resumePlan, rewrites.length]);
+  }, [acceptedBullets, claimsValidation, confirmedFacts, currentStep, factLedger, finalConfirmed, finalResume, resumePlan, rewrites.length]);
+
+  const currentInstruction = useMemo(() => {
+    if (currentStep === "facts") return "事实台账已根据确认材料生成，可直接进入简历撰写规划。";
+    if (currentStep === "plan") return "确认经历的选择和优先级，再生成分段改写策略。";
+    if (currentStep === "rewrite") return "逐条接受或暂不采用，确认后系统会自动完成事实校验。";
+    if (currentStep === "finalize") return "核对最终简历，确认后可下载 PDF 或 DOCX。";
+    return "上传简历与岗位 JD，校正文本后只需确认一次材料。";
+  }, [currentStep]);
 
   function invalidateFromMaterials() {
+    setShowAllFacts(false);
     setFactLedger(null);
-    setResumePlan(null);
-    setRewrites([]);
-    setClaimsValidation(null);
-    setFinalResume(null);
-    setFinalConfirmed(false);
-  }
-
-  function invalidateFromFacts() {
     setResumePlan(null);
     setRewrites([]);
     setClaimsValidation(null);
@@ -390,14 +394,19 @@ export default function ResumeStudioPage() {
     try {
       const result = await postJson({ action: "build_fact_ledger", resume_text: resumeText });
       if (!result.fact_ledger) throw new Error("事实台账返回为空。");
-      setFactLedger(result.fact_ledger);
+      const confirmedLedger: FactLedger = {
+        ...result.fact_ledger,
+        items: result.fact_ledger.items.map((item) => ({ ...item, verification_status: "confirmed" }))
+      };
+      setFactLedger(confirmedLedger);
+      setShowAllFacts(false);
       setResumeInput((current) => ({ ...current, edited_text: resumeText, extracted_text: current.extracted_text || resumeText, confirmed: true }));
       setJdInput((current) => ({ ...current, edited_text: jdText, extracted_text: current.extracted_text || jdText, confirmed: true }));
       setResumePlan(null);
       setRewrites([]);
       setClaimsValidation(null);
       setFinalResume(null);
-      setStatusMessage("事实台账已生成。请逐条核对，待确认事实不会进入后续改写。");
+      setStatusMessage("材料已确认，事实台账已自动生成，可以继续规划简历。");
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "事实台账生成失败。");
       setStatusMessage("事实台账尚未生成，请检查材料后重试。");
@@ -406,27 +415,9 @@ export default function ResumeStudioPage() {
     }
   }
 
-  function updateFactStatus(evidenceId: string, status: FactVerificationStatus) {
-    if (!factLedger) return;
-    setFactLedger({
-      ...factLedger,
-      items: factLedger.items.map((item) => item.evidence_id === evidenceId ? { ...item, verification_status: status } : item)
-    });
-    invalidateFromFacts();
-  }
-
-  function confirmAllFacts() {
-    if (!factLedger) return;
-    setFactLedger({
-      ...factLedger,
-      items: factLedger.items.map((item) => ({ ...item, verification_status: "confirmed" }))
-    });
-    invalidateFromFacts();
-  }
-
   async function handleBuildPlan() {
     if (!factLedger || !confirmedFacts) {
-      setError("请先确认至少一条事实。");
+      setError("请先确认材料并生成事实台账。");
       return;
     }
     setBusyAction("plan");
@@ -492,48 +483,41 @@ export default function ResumeStudioPage() {
     invalidateFromRewrite();
   }
 
-  async function handleValidateClaims() {
-    if (!factLedger || !rewrites.length) return;
+  async function handleConfirmRewriteStrategy() {
+    if (!factLedger || !resumePlan || !rewrites.length) return;
     if (!acceptedBullets) {
-      setError("请至少接受一条改写后再校验。");
+      setError("请至少接受一条改写后再生成简历。");
       return;
     }
-    setBusyAction("validate");
-    setError("");
-    setStatusMessage("正在检查证据编号、待确认事实、日期、指标与固定事实漂移。");
-    try {
-      const result = await postJson({ action: "validate_resume_claims", fact_ledger: factLedger, rewrites });
-      if (!result.claims_validation) throw new Error("校验结果返回为空。");
-      setClaimsValidation(result.claims_validation);
-      setFinalResume(null);
-      setFinalConfirmed(false);
-      setStatusMessage(result.claims_validation.valid ? "事实与指标校验通过，可以生成完整文本简历。" : "发现阻断问题，请回到对应改写或事实台账处理。 ");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "事实校验失败。");
-    } finally {
-      setBusyAction("");
-    }
-  }
-
-  async function handleFinalizeResume() {
-    if (!factLedger || !resumePlan || !claimsValidation?.valid) return;
     setBusyAction("finalize");
     setError("");
-    setStatusMessage("正在组合已接受改写，并对摘要与能力项再次做证据过滤。");
+    setStatusMessage("正在校验改写策略，并组合通过校验的简历内容。");
     try {
-      const result = await postJson({
+      const validationResult = await postJson({ action: "validate_resume_claims", fact_ledger: factLedger, rewrites });
+      const validation = validationResult.claims_validation;
+      if (!validation) throw new Error("校验结果返回为空。");
+      setClaimsValidation(validation);
+
+      if (!validation.valid) {
+        setFinalResume(null);
+        setFinalConfirmed(false);
+        setStatusMessage("发现阻断问题，请在当前步骤调整改写或返回事实台账处理。");
+        return;
+      }
+
+      const finalResult = await postJson({
         action: "finalize_resume",
         fact_ledger: factLedger,
         resume_plan: resumePlan,
         rewrites,
-        claims_validation: claimsValidation
+        claims_validation: validation
       });
-      if (!result.final_resume) throw new Error("完整简历返回为空。");
-      setFinalResume(result.final_resume);
+      if (!finalResult.final_resume) throw new Error("完整简历返回为空。");
+      setFinalResume(finalResult.final_resume);
       setFinalConfirmed(false);
-      setStatusMessage("完整文本简历已生成。确认内容后即可进入定制模拟面试。");
+      setStatusMessage("改写策略和事实校验均已通过。请核对简历后下载 PDF 或 DOCX。");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "完整简历生成失败。");
+      setError(requestError instanceof Error ? requestError.message : "简历生成失败。");
     } finally {
       setBusyAction("");
     }
@@ -544,6 +528,22 @@ export default function ResumeStudioPage() {
     await navigator.clipboard.writeText(finalResume.full_text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  async function downloadFinalResume(format: "pdf" | "docx") {
+    if (!finalResume || !finalConfirmed) return;
+    if (format === "pdf" && !resumeExportRef.current) return;
+    setExporting(format);
+    setError("");
+    try {
+      if (format === "docx") await downloadResumeDocx(finalResume);
+      else await downloadResumePdf(finalResume, resumeExportRef.current as HTMLDivElement);
+      setStatusMessage(`简历 ${format.toUpperCase()} 已生成并开始下载。`);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "简历下载失败，请稍后重试。");
+    } finally {
+      setExporting("");
+    }
   }
 
   function startCustomInterview() {
@@ -570,15 +570,15 @@ export default function ResumeStudioPage() {
         <header className="page-hero page-hero-resume resume-studio-hero">
           <div className="page-hero-main resume-studio-hero-copy">
             <p className="resume-studio-eyebrow">简历工作台</p>
-            <h1 className="page-title">先把事实钉牢，<br />再把这份简历变成面试的起点</h1>
+            <h1 className="page-title">根据岗位 JD 重构你的简历，<br />把经历做一次优先级排序</h1>
             <p className="mock-subtitle">从原始证据、岗位规划到逐条改写，每一步都留下证据编号；<br />没有证据的内容只会进入缺口清单。</p>
           </div>
           <aside className="resume-studio-method-card">
             <div>
               <p className="resume-studio-method-label">方法论版本</p>
               <strong>{RESUME_METHODOLOGY_VERSION}</strong>
-              <p>MVP 只交付可复制文本，不处理 DOCX / PDF 格式。</p>
-              <small>状态：方法论已载入</small>
+              <p>事实校验通过后，可下载 PDF 与 DOCX 简历。</p>
+              <small>状态：方法论与导出能力已载入</small>
             </div>
             <Image src="/resume-studio/methodology-folder.png" alt="简历方法论文件夹插画" width={116} height={116} priority unoptimized />
           </aside>
@@ -589,7 +589,7 @@ export default function ResumeStudioPage() {
 
         <section className="resume-studio-status">
           <span className="resume-studio-status-label">当前步骤</span>
-          <p>先上传或粘贴简历与岗位 JD，再从事实台账开始。</p>
+          <p>{currentInstruction}</p>
           <span className="resume-studio-live-status" aria-live="polite">{statusMessage}</span>
         </section>
 
@@ -597,10 +597,10 @@ export default function ResumeStudioPage() {
           <div className="custom-card-head">
             <div>
               <p className="section-tag">第 1 步</p>
-              <h2>上传简历与 JD</h2>
+              <h2>材料上传与解析</h2>
             </div>
             <button className="primary-button" onClick={() => void handleBuildFactLedger()} disabled={!!busyAction || !resumeText.trim() || !jdText.trim()}>
-              <span>{busyAction === "facts" ? "正在生成…" : factLedger ? "重新生成事实台账" : "生成事实台账"}</span>
+              <span>{busyAction === "facts" ? "确认并生成中…" : factLedger ? "重新确认材料" : "确认材料并生成事实台账"}</span>
               <ArrowRight size={17} weight="bold" aria-hidden="true" />
             </button>
           </div>
@@ -693,50 +693,44 @@ export default function ResumeStudioPage() {
             <div className="custom-card-head">
               <div>
                 <p className="section-tag">第 2 步</p>
-                <h2>核对事实台账</h2>
-                <p className="custom-helper">每条事实保留原文证据。只有“已确认”内容能进入岗位规划。</p>
+                <h2>事实台账</h2>
+                <p className="custom-helper">台账根据已确认材料自动生成，用于保留证据编号和固定事实，不再重复确认。</p>
               </div>
-              <div className="custom-answer-actions resume-studio-head-actions">
-                <button className="secondary-button" onClick={confirmAllFacts} disabled={!!busyAction || pendingFacts === 0}>全部确认</button>
-                <button className="primary-button" onClick={() => void handleBuildPlan()} disabled={!!busyAction || confirmedFacts === 0}>
-                  {busyAction === "plan" ? "规划中…" : resumePlan ? "重新生成岗位规划" : "生成岗位规划"}
-                </button>
-              </div>
+              <button className="primary-button" onClick={() => void handleBuildPlan()} disabled={!!busyAction || confirmedFacts === 0}>
+                {busyAction === "plan" ? "规划中…" : resumePlan ? "重新生成撰写规划" : "生成简历撰写规划"}
+              </button>
             </div>
             <div className="resume-studio-summary-row">
               <span>事实 {factLedger.items.length}</span>
-              <span className="is-confirmed">已确认 {confirmedFacts}</span>
-              <span className="is-pending">待确认 {pendingFacts}</span>
+              <span className="is-confirmed">材料已确认</span>
               <span>证据缺口 {factLedger.evidence_gaps.length}</span>
             </div>
-            <div className="resume-studio-ledger-list">
-              {factLedger.items.map((item) => (
-                <article key={item.evidence_id} className={`resume-studio-fact-card is-${item.verification_status}`}>
-                  <div className="resume-studio-fact-topline">
-                    <div className="custom-tag-row">
-                      <span className="custom-tag">{item.evidence_id}</span>
-                      <span className="resume-studio-mini-pill">{categoryLabel(item.category)}</span>
-                      {item.fixed ? <span className="resume-studio-mini-pill is-fixed">固定事实</span> : null}
+            <div className="resume-studio-ledger-list is-compact">
+              {visibleFactItems.map((item) => (
+                <details key={item.evidence_id} className="resume-studio-fact-row">
+                  <summary>
+                    <span className="custom-tag">{item.evidence_id}</span>
+                    <span className="resume-studio-mini-pill">{categoryLabel(item.category)}</span>
+                    <strong>{item.fact}</strong>
+                    {item.fixed ? <span className="resume-studio-mini-pill is-fixed">固定</span> : null}
+                  </summary>
+                  <div className="resume-studio-fact-detail">
+                    <blockquote>{item.source_excerpt}</blockquote>
+                    <div className="resume-studio-fact-meta">
+                      <span>{item.experience_title}</span>
+                      {item.date?.raw ? <span>日期：{item.date.raw}</span> : null}
+                      {item.metrics.map((metric) => <span key={`${item.evidence_id}-${metric.raw}`}>指标：{metric.raw}</span>)}
                     </div>
-                    <span className={`stage-status-pill is-${item.verification_status === "confirmed" ? "complete" : "upcoming"}`}>
-                      {item.verification_status === "confirmed" ? "已确认" : "待确认"}
-                    </span>
+                    {item.risk_note ? <p className="resume-studio-warning">{item.risk_note}</p> : null}
                   </div>
-                  <h3>{item.fact}</h3>
-                  <blockquote>{item.source_excerpt}</blockquote>
-                  <div className="resume-studio-fact-meta">
-                    <span>{item.experience_title}</span>
-                    {item.date?.raw ? <span>日期：{item.date.raw}</span> : null}
-                    {item.metrics.map((metric) => <span key={`${item.evidence_id}-${metric.raw}`}>指标：{metric.raw}</span>)}
-                  </div>
-                  {item.risk_note ? <p className="resume-studio-warning">{item.risk_note}</p> : null}
-                  <div className="custom-answer-actions">
-                    <button className="secondary-button" onClick={() => updateFactStatus(item.evidence_id, "confirmed")} disabled={item.verification_status === "confirmed"}>确认无误</button>
-                    <button className="secondary-button" onClick={() => updateFactStatus(item.evidence_id, "pending")} disabled={item.verification_status === "pending"}>保留待确认</button>
-                  </div>
-                </article>
+                </details>
               ))}
             </div>
+            {factLedger.items.length > 6 ? (
+              <button className="resume-studio-ledger-toggle secondary-button" onClick={() => setShowAllFacts((current) => !current)}>
+                {showAllFacts ? "收起事实台账" : `查看全部 ${factLedger.items.length} 条事实`}
+              </button>
+            ) : null}
             {factLedger.evidence_gaps.length ? (
               <div className="resume-studio-gap-box">
                 <p className="custom-field-label">事实阶段证据缺口</p>
@@ -751,11 +745,11 @@ export default function ResumeStudioPage() {
             <div className="custom-card-head">
               <div>
                 <p className="section-tag">第 3 步</p>
-                <h2>岗位匹配规划</h2>
+                <h2>简历撰写规划</h2>
                 <p className="custom-helper">目标：{resumePlan.target_role} · {resumePlan.narrative}</p>
               </div>
               <button className="primary-button" onClick={() => void handleRewriteExperiences()} disabled={!!busyAction || !resumePlan.experiences.some((item) => item.selected)}>
-                {busyAction === "rewrite" ? "分段改写中…" : rewrites.length ? "重新改写所选经历" : "改写所选经历"}
+                {busyAction === "rewrite" ? "生成策略中…" : rewrites.length ? "重新生成改写策略" : "生成分段改写策略"}
               </button>
             </div>
             <div className="custom-tag-row">
@@ -804,11 +798,11 @@ export default function ResumeStudioPage() {
             <div className="custom-card-head">
               <div>
                 <p className="section-tag">第 4 步</p>
-                <h2>原文与改写对照</h2>
-                <p className="custom-helper">接受后的内容才会进入校验；接受或暂不采用后都可以撤销。</p>
+                <h2>分段改写策略确认</h2>
+                <p className="custom-helper">对照原文逐条确认。提交时会自动校验事实、指标和证据编号。</p>
               </div>
-              <button className="primary-button" onClick={() => void handleValidateClaims()} disabled={!!busyAction || acceptedBullets === 0}>
-                {busyAction === "validate" ? "校验中…" : "校验事实与指标"}
+              <button className="primary-button" onClick={() => void handleConfirmRewriteStrategy()} disabled={!!busyAction || acceptedBullets === 0}>
+                {busyAction === "finalize" ? "校验并生成中…" : "确认策略并生成简历"}
               </button>
             </div>
             <div className="resume-studio-rewrite-list">
@@ -861,34 +855,23 @@ export default function ResumeStudioPage() {
                 </article>
               ))}
             </div>
-          </section>
-        ) : null}
-
-        {claimsValidation ? (
-          <section className={`custom-card resume-studio-section is-${currentStep === "validate" ? "current" : "complete"}`}>
-            <div className="custom-card-head">
-              <div>
-                <p className="section-tag">第 5 步</p>
-                <h2>事实与指标校验</h2>
-                <p className="custom-helper">已检查 {claimsValidation.checked_claims} 条正文声明。</p>
-              </div>
-              <button className="primary-button" onClick={() => void handleFinalizeResume()} disabled={!!busyAction || !claimsValidation.valid}>
-                {busyAction === "finalize" ? "生成中…" : finalResume ? "重新生成完整简历" : "生成完整文本简历"}
-              </button>
-            </div>
-            <div className={`resume-studio-validation-banner is-${claimsValidation.valid ? "pass" : "fail"}`}>
-              <strong>{claimsValidation.valid ? "校验通过" : `发现 ${claimsValidation.issues.length} 个阻断问题`}</strong>
-              <span>{claimsValidation.valid ? "没有发现无证据指标、固定事实漂移或待确认事实引用。" : "请先回到事实台账或改写步骤处理。"}</span>
-            </div>
-            {claimsValidation.issues.length ? (
-              <div className="resume-studio-issue-list">
-                {claimsValidation.issues.map((issue) => (
-                  <article key={issue.issue_id}>
-                    <span>{issue.code}</span>
-                    <strong>{issue.message}</strong>
-                    <p>{issue.claim}</p>
-                  </article>
-                ))}
+            {claimsValidation ? (
+              <div className={`resume-studio-validation-banner is-${claimsValidation.valid ? "pass" : "fail"}`}>
+                <div>
+                  <strong>{claimsValidation.valid ? "事实校验通过" : `发现 ${claimsValidation.issues.length} 个阻断问题`}</strong>
+                  <span>{claimsValidation.valid ? `已检查 ${claimsValidation.checked_claims} 条正文声明。` : "请处理后重新确认改写策略。"}</span>
+                </div>
+                {claimsValidation.issues.length ? (
+                  <div className="resume-studio-issue-list">
+                    {claimsValidation.issues.map((issue) => (
+                      <article key={issue.issue_id}>
+                        <span>{issue.code}</span>
+                        <strong>{issue.message}</strong>
+                        <p>{issue.claim}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -898,13 +881,26 @@ export default function ResumeStudioPage() {
           <section className="custom-card resume-studio-section is-current">
             <div className="custom-card-head">
               <div>
-                <p className="section-tag">第 6 步</p>
-                <h2>完整文本简历</h2>
-                <p className="custom-helper">正文来自已接受改写；摘要和能力项也已做证据过滤。</p>
+                <p className="section-tag">第 5 步</p>
+                <h2>生成并下载简历</h2>
+                <p className="custom-helper">正文只包含已接受且通过事实校验的内容。</p>
               </div>
-              <button className="secondary-button" onClick={() => void copyFinalResume()}>{copied ? "已复制" : "复制全文"}</button>
+              <div className="custom-answer-actions resume-studio-export-actions">
+                <button className="secondary-button" onClick={() => void copyFinalResume()}>
+                  <CopySimple size={17} aria-hidden="true" />
+                  {copied ? "已复制" : "复制全文"}
+                </button>
+                <button className="secondary-button" onClick={() => void downloadFinalResume("pdf")} disabled={!finalConfirmed || !!exporting}>
+                  <FilePdf size={18} aria-hidden="true" />
+                  {exporting === "pdf" ? "生成 PDF 中…" : "下载 PDF"}
+                </button>
+                <button className="primary-button" onClick={() => void downloadFinalResume("docx")} disabled={!finalConfirmed || !!exporting}>
+                  <FileDoc size={18} aria-hidden="true" />
+                  {exporting === "docx" ? "生成 DOCX 中…" : "下载 DOCX"}
+                </button>
+              </div>
             </div>
-            <pre className="resume-studio-final-text">{finalResume.full_text}</pre>
+            <ResumeDocument ref={resumeExportRef} resume={finalResume} />
             {finalResume.validation.evidence_gaps.length ? (
               <div className="resume-studio-gap-box">
                 <p className="custom-field-label">未写入正文的证据缺口</p>

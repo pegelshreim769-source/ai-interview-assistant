@@ -119,7 +119,7 @@ design-qa.md                     # 桌面与移动端视觉检查记录
 
 ## 技术栈
 
-- Next.js 14、React 18、TypeScript
+- Next.js 15、React 18、TypeScript
 - 原生 CSS 变量与响应式布局
 - Phosphor Icons
 - `pdf-parse`、`mammoth`、`tesseract.js`
@@ -130,7 +130,7 @@ design-qa.md                     # 桌面与移动端视觉检查记录
 
 ## 本地运行
 
-要求：Node.js 18+。
+要求：Node.js 20.9+；生产部署建议使用 Node.js 22 LTS。
 
 ```bash
 npm install
@@ -170,6 +170,25 @@ npm test           # 简历事实与证据校验测试
 npm run build      # 生产构建
 npm run start      # 启动生产服务
 ```
+
+## 中国境内部署
+
+仓库已包含可重复部署所需的生产配置：
+
+- `Dockerfile`：构建 Next.js standalone 生产镜像
+- `compose.production.yml`：单机容器编排、健康检查与数据卷
+- `deploy/nginx/interview-studio.conf`：HTTPS 反向代理、上传限制和基础接口限流
+- `/api/health`：不访问第三方服务、不泄露密钥的健康检查接口
+- `docs/deployment-cn.md`：从域名备案、服务器准备到发布和回滚的操作手册
+
+正式上线前先复制生产环境变量模板，并只在服务器本地填写密钥：
+
+```bash
+cp .env.production.example .env.production
+docker compose -f compose.production.yml up -d --build
+```
+
+服务默认仅绑定服务器的 `127.0.0.1:3000`，公网流量应通过 Nginx 和 HTTPS 进入。不要将 `.env.production` 提交到 Git。
 
 测试场景覆盖：
 

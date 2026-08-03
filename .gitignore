@@ -4,7 +4,8 @@ out
 dist
 .DS_Store
 *.log
-.env.local
-.env.*.local
+.env*
+!.env.example
+!.env.production.example
 tsconfig.tsbuildinfo
 .data

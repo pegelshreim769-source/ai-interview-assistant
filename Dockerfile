@@ -7,6 +7,10 @@ FROM base AS dependencies
 COPY package.json package-lock.json ./
 RUN npm ci
 
+FROM dependencies AS invite-admin
+COPY . .
+ENTRYPOINT ["node", "--conditions=react-server", "--import", "tsx", "scripts/invitations.ts"]
+
 FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .

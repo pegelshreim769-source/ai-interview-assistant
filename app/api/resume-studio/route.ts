@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../lib/beta-access/api-auth";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { parseJsonObject, readAssistantTextContent } from "../../lib/server/json-output";
 import { LIMITS } from "../../lib/shared/limits";
@@ -280,7 +281,7 @@ async function finalizeResume(factLedger: FactLedger, resumePlan: ResumePlan, re
   } satisfies FinalResume;
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const body = (await request.json()) as ResumeStudioRequest;
 
@@ -315,3 +316,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 }
+
+export const POST = withBetaAccess(handlePost);

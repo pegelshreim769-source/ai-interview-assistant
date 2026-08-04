@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../lib/beta-access/api-auth";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { LIMITS } from "../../lib/shared/limits";
 
@@ -243,7 +244,7 @@ function encoderChunk(input: string) {
   return new TextEncoder().encode(input);
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const providerConfig = getChatProviderConfig();
 
@@ -363,3 +364,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "服务端分析失败，请稍后再试。" }, { status: 500 });
   }
 }
+
+export const POST = withBetaAccess(handlePost);

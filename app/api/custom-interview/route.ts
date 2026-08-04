@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../lib/beta-access/api-auth";
 import { LIMITS } from "../../lib/shared/limits";
 import type {
   CustomInterviewDebugTrace,
@@ -592,7 +593,7 @@ async function runCustomInterviewNode(payload: RunCustomInterviewAction): Promis
   };
 }
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const body = (await request.json()) as RequestBody;
 
@@ -666,3 +667,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withBetaAccess(handlePost);

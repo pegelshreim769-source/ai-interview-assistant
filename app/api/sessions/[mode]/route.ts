@@ -11,6 +11,12 @@ type StoredSession = SessionPayload & {
   session_id: string;
 };
 
+type RouteContext = {
+  params: Promise<{
+    mode: string;
+  }>;
+};
+
 function isSessionMode(mode: string): mode is SessionMode {
   return mode === "mock-interview" || mode === "custom-interview";
 }
@@ -19,9 +25,9 @@ function validClientId(clientId: string) {
   return !!clientId.trim() && clientId.length <= 64;
 }
 
-export async function GET(request: Request, context: { params: { mode: string } }) {
+export async function GET(request: Request, context: RouteContext) {
   try {
-    const mode = context.params.mode;
+    const { mode } = await context.params;
     const url = new URL(request.url);
     const clientId = url.searchParams.get("client_id") || "";
 
@@ -40,9 +46,9 @@ export async function GET(request: Request, context: { params: { mode: string } 
   }
 }
 
-export async function POST(request: Request, context: { params: { mode: string } }) {
+export async function POST(request: Request, context: RouteContext) {
   try {
-    const mode = context.params.mode;
+    const { mode } = await context.params;
 
     if (!isSessionMode(mode)) {
       return NextResponse.json({ error: "不支持的会话模式。" }, { status: 400 });

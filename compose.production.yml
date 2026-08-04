@@ -15,6 +15,9 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - session_data:/app/.data
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -27,5 +30,36 @@ services:
       start_period: 20s
     init: true
 
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  invite-admin:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: invite-admin
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   session_data:
+  redis_data:

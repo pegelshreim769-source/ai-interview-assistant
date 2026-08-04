@@ -8,10 +8,15 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test app/lib/resume-studio/__tests__/*.test.ts",
+    "test": "node --conditions=react-server --import tsx --test app/lib/resume-studio/__tests__/*.test.ts app/lib/beta-access/__tests__/*.test.ts",
+    "invite:create": "node --conditions=react-server --import tsx scripts/invitations.ts create",
+    "invite:list": "node --conditions=react-server --import tsx scripts/invitations.ts list",
+    "invite:disable": "node --conditions=react-server --import tsx scripts/invitations.ts disable",
+    "invite:revoke": "node --conditions=react-server --import tsx scripts/invitations.ts revoke",
     "eval:routes": "node scripts/eval-routes.mjs"
   },
   "dependencies": {
+    "@next/env": "^15.5.21",
     "@phosphor-icons/react": "^2.1.10",
     "docx": "^9.7.1",
     "html2pdf.js": "^0.14.0",
@@ -20,6 +25,8 @@
     "pdf-parse": "^2.4.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "redis": "^5.8.2",
+    "server-only": "^0.0.1",
     "tesseract.js": "^7.0.0"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../lib/beta-access/api-auth";
 import { getAsrProviderConfig, requestAudioTranscription } from "../../lib/server/ai-provider";
 import { readAssistantTextContent } from "../../lib/server/json-output";
 import { LIMITS } from "../../lib/shared/limits";
@@ -14,7 +15,7 @@ type AsrResponse = {
   };
 };
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const providerConfig = getAsrProviderConfig();
 
@@ -56,3 +57,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "语音转写失败，请稍后再试。" }, { status: 500 });
   }
 }
+
+export const POST = withBetaAccess(handlePost);

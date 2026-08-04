@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../../lib/beta-access/api-auth";
 import { extractUploadedMaterial, type MaterialExtractKind } from "../../../lib/server/material-extraction";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+async function handlePost(request: Request) {
   try {
     const formData = await request.formData();
     const kind = formData.get("kind");
@@ -25,3 +26,5 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export const POST = withBetaAccess(handlePost);

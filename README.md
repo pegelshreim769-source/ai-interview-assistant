@@ -4,6 +4,8 @@
 
 Interview Studio 是一个面向大学生、职场新人和求职者的 AI 面试练习平台。产品不替用户编造项目、指标或结果，而是把简历优化与面试训练连接成一条可核对、可追溯的准备流程。
 
+当前版本为封闭 Beta。四个产品工作区和所有业务 API 均需要有效邀请码会话；系统不要求手机号、姓名或邮箱，也不建设正式账号体系。
+
 当前产品包含两个工作区：
 
 | 工作区 | 功能 |
@@ -81,6 +83,11 @@ tailor-chinese-resumes-ts@0.1.0
 | `/` | 文字练习 |
 | `/mock-interview` | 模拟面试 |
 | `/custom-interview` | 定制面试 |
+| `/access` | 封闭 Beta 邀请码入口 |
+| `/api/access/redeem` | 兑换邀请码并建立会话 |
+| `/api/access/session` | 检查当前封闭测试会话 |
+| `/api/access/logout` | 注销当前封闭测试会话 |
+| `/api/health` | 公开健康检查 |
 | `/api/resume-studio` | 简历工作台独立动作 API |
 | `/api/resume-studio/extract` | 简历与 JD 材料解析 |
 | `/api/analyze` | 文字练习分析 |
@@ -156,9 +163,51 @@ DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_ASR_MODEL=qwen3-asr-flash
 
 NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false
+
+REDIS_URL=redis://127.0.0.1:6379
+BETA_SESSION_DAYS=14
 ```
 
 建议在 Beta 阶段保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`，优先使用浏览器本地存储。
+
+`REDIS_URL` 和 `BETA_SESSION_DAYS` 仅在服务端使用。生产 Compose 中应使用 `redis://redis:6379`；浏览器 Cookie 只保存不可预测的会话令牌，令牌不会写入 localStorage 或 sessionStorage。
+
+## 封闭 Beta 邀请码
+
+邀请码和会话只以 SHA-256 哈希形式存入 Redis。邀请码明文只在创建成功时显示一次，请通过安全渠道交付；之后无法从 Redis 恢复。
+
+本地或能直接访问 `REDIS_URL` 的环境可以运行：
+
+```bash
+# 创建默认单次、永不过期的邀请码
+npm run invite:create
+
+# 创建 14 天有效、最多可兑换 5 次的邀请码
+npm run invite:create -- --expires-in-days 14 --max-uses 5
+
+# 也可以指定 ISO 到期时间
+npm run invite:create -- --expires-at 2026-09-01T00:00:00+08:00 --max-uses 1
+
+# 查看状态，不显示邀请码明文或哈希
+npm run invite:list
+
+# 禁止继续兑换；已有会话也会在下一次鉴权时失效
+npm run invite:disable -- <invite-id>
+
+# 撤销邀请码并立即删除全部关联会话
+npm run invite:revoke -- <invite-id>
+```
+
+生产 Compose 中 Redis 不暴露宿主机端口，应通过一次性工具容器执行同样操作：
+
+```bash
+docker compose -f compose.production.yml run --rm invite-admin create --expires-in-days 14 --max-uses 5
+docker compose -f compose.production.yml run --rm invite-admin list
+docker compose -f compose.production.yml run --rm invite-admin disable <invite-id>
+docker compose -f compose.production.yml run --rm invite-admin revoke <invite-id>
+```
+
+`/api/health` 保持公开。其他业务 API 在无会话或会话失效时统一返回 HTTP 401；Redis 或鉴权服务异常时默认拒绝访问并返回 HTTP 503。
 
 ## 开发命令
 
@@ -169,6 +218,10 @@ npm run typecheck  # TypeScript 类型检查
 npm test           # 简历事实与证据校验测试
 npm run build      # 生产构建
 npm run start      # 启动生产服务
+npm run invite:create  # 创建封闭 Beta 邀请码
+npm run invite:list    # 查看邀请码状态
+npm run invite:disable -- <invite-id> # 禁用邀请码
+npm run invite:revoke -- <invite-id>  # 撤销邀请码及关联会话
 ```
 
 ## 中国境内部署
@@ -212,6 +265,7 @@ docker compose -f compose.production.yml up -d --build
 - PDF 由浏览器端排版生成；复杂模板和精细分页仍会继续优化。
 - OCR、文件提取和语音转写效果受材料质量、浏览器权限与网络状态影响。
 - 当前没有账号体系，不同设备之间不会自动同步本地记录。
+- 封闭 Beta 会话依赖 Redis；Redis 不可用时页面与业务 API 会默认拒绝访问，健康检查仍保持公开。
 - 这是 Beta 版本，提示词、追问质量和定制面试稳定性仍会持续迭代。
 
 ## Roadmap

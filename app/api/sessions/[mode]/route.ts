@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withBetaAccess } from "../../../lib/beta-access/api-auth";
 import { readServerSessions, type SessionMode, upsertServerSession } from "../../../lib/server/session-store";
 
 type SessionPayload = {
@@ -25,7 +26,7 @@ function validClientId(clientId: string) {
   return !!clientId.trim() && clientId.length <= 64;
 }
 
-export async function GET(request: Request, context: RouteContext) {
+async function handleGet(request: Request, context: RouteContext) {
   try {
     const { mode } = await context.params;
     const url = new URL(request.url);
@@ -46,7 +47,7 @@ export async function GET(request: Request, context: RouteContext) {
   }
 }
 
-export async function POST(request: Request, context: RouteContext) {
+async function handlePost(request: Request, context: RouteContext) {
   try {
     const { mode } = await context.params;
 
@@ -73,3 +74,6 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "保存历史记录失败，请稍后再试。" }, { status: 500 });
   }
 }
+
+export const GET = withBetaAccess(handleGet);
+export const POST = withBetaAccess(handlePost);

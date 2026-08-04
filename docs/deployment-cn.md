@@ -2,7 +2,7 @@
 
 ## 1. 推荐架构
 
-封闭 Beta 采用单机架构：境内云服务器运行 Docker，Nginx 负责 HTTPS 与反向代理，Next.js standalone 容器同时承载页面和 API，Redis 只在 Compose 内部网络保存邀请码哈希和会话哈希。
+封闭 Beta 采用单机架构：境内云服务器运行 Docker，Nginx 负责 HTTPS、反向代理与写入可信客户端地址，Next.js standalone 容器同时承载页面和 API。Redis 只在 Compose 内部网络保存邀请码/会话哈希、哈希后的限流标识、费用计数和并发租约。
 
 ```text
 用户 → 域名与 HTTPS → Nginx → Next.js 容器 → 大模型 / 语音服务
@@ -31,7 +31,23 @@ cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
-编辑 `.env.production`，替换两处 `replace_on_server`，并保持 `REDIS_URL=redis://redis:6379`。`BETA_SESSION_DAYS` 用于设置封闭测试会话有效天数。不得将真实密钥提交到 Git、写进镜像或发送到前端。
+编辑 `.env.production`，替换模型密钥和 `BETA_IP_HASH_SECRET`，并保持 `REDIS_URL=redis://redis:6379`。可以用 `openssl rand -hex 32` 生成 IP HMAC 密钥。`BETA_SESSION_DAYS` 用于设置封闭测试会话有效天数。不得将真实密钥提交到 Git、写进镜像或发送到前端。
+
+费用保护变量及默认值：
+
+| 变量 | 默认值 | 含义 |
+| --- | ---: | --- |
+| `BETA_USER_AI_RPM` | 5 | 单个匿名会话每分钟 AI 请求数 |
+| `BETA_IP_AI_RPM` | 20 | 单个 IP 每分钟 AI 请求数 |
+| `BETA_USER_DAILY_UNITS` | 60 | 单会话每日费用单位 |
+| `BETA_GLOBAL_AI_CONCURRENCY` | 8 | 全站 AI 并发租约数 |
+| `BETA_ESTIMATED_CNY_PER_UNIT` | 0.20 | 每单位估算人民币金额 |
+| `BETA_DAILY_AI_BUDGET_CNY` | 20 | 全站每日估算预算 |
+| `BETA_MONTHLY_AI_BUDGET_CNY` | 300 | 全站每月估算预算 |
+| `BETA_BUDGET_TIMEZONE` | Asia/Shanghai | 日/月周期时区 |
+| `BETA_IP_HASH_SECRET` | 无可用生产默认值 | 规范化 IP 的 HMAC 密钥 |
+
+所有金额在应用内部按整数“分”累计，固定费用估算不等于模型厂商实际账单。生产配置非法、HMAC 密钥缺失或 Redis 异常时，AI 请求和邀请码兑换会默认拒绝并返回 503。
 
 ## 4. 首次发布
 
@@ -45,6 +61,16 @@ curl --fail http://127.0.0.1:3000/api/health
 健康接口应返回 `status: ok`。它只检查应用进程，不会主动调用第三方 AI 服务，因此不会产生模型费用，也不会泄露服务配置。
 
 Redis 服务没有配置 `ports`，不能从宿主机或公网直接访问；数据通过 `redis_data` 卷持久化。应用在 Redis 不可用时默认拒绝页面访问和业务 API 请求，`/api/health` 仍保持公开。
+
+可在测试 Redis 中验证限流、配额和并发 Lua 脚本：
+
+```bash
+docker compose -f compose.production.yml run --rm beta-usage-redis-test
+```
+
+脚本使用随机测试命名空间并在结束后清理。不要在生产 Redis 执行 `FLUSHALL`；若需要重置测试额度，只删除明确的 `interview-studio:usage-test:*` 测试 Key。生产限额调整应修改环境变量并重启应用，不应通过删除计数绕过保护。
+
+另提供容器级 HTTP 验收器，可验证邀请码、用户/IP 限流、日配额、预算和 Redis 停机行为。它必须使用独立测试 Redis 和 `BETA_ACCEPTANCE_TEST=true`，因为 `rate`、`quota`、`budget` 模式会清理该隔离环境的 `interview-studio:usage:*` 计数；严禁在生产环境启用该开关。`redis-unavailable` 模式不访问 Redis，可在 Redis 已停止时用 `--no-deps` 验证受保护 API 默认拒绝而健康检查保持公开。
 
 ## 5. 管理封闭 Beta 邀请码
 
@@ -75,7 +101,24 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-配置文件初始限制为每个 IP 每分钟 30 次 API 请求、突发 20 次，上传体积上限 6 MB，AI 接口超时 180 秒。正式发布前应根据真实流量与模型费用调整，并配置 HTTPS 证书；不要长期只提供 HTTP。
+配置文件初始提供 Nginx 基础流量保护，应用层另有会话/IP 分钟限制、日额度、并发和预算熔断。Nginx 会覆盖外部传入的转发链并用 `$remote_addr` 写入 `X-Real-IP`；Next.js 只信任该头，不读取客户端提供的第一个 `X-Forwarded-For`。应用仅绑定 `127.0.0.1:3000`，不得绕过 Nginx 暴露公网。上传体积上限为 6 MB，AI 接口超时 180 秒。
+
+IP 识别规则：合法 IPv4 会规范化十进制分段，IPv6 会压缩并转为小写后再做 HMAC；无效地址、逗号分隔的转发链和生产环境缺失 `X-Real-IP` 都会默认拒绝。仅在本地非生产开发且缺少该头时使用 `127.0.0.1` 作为明确回退。Redis 计数 Key 永远不保存原始地址。
+
+费用单位与预算行为：
+
+| 接口 | 单位 | 类型 |
+| --- | ---: | --- |
+| `/api/analyze`、`/api/mock-interview` | 1 | 低费用 |
+| `/api/custom-interview`、`/api/custom-interview/extract` | 2 | 高费用 |
+| `/api/resume-studio`、`/api/resume-studio/extract` | 2 | 高费用 |
+| `/api/transcribe`、`/api/mock-interview/transcribe` | 2 | 高费用 |
+
+- 70%：服务继续，每个周期只输出一次不包含用户材料、IP、会话或邀请码的告警。
+- 90%：拒绝 2 单位功能，允许 1 单位功能。
+- 100%：拒绝新的 AI 请求，非 AI 页面与接口继续工作。
+
+分钟请求计数包含参数错误请求。费用单位在业务 Handler 开始前原子预扣；鉴权或保护失败不扣减，进入 Handler 后失败不退还。日/月周期按 `BETA_BUDGET_TIMEZONE` 计算。
 
 ## 7. 发布检查
 
@@ -90,6 +133,10 @@ sudo systemctl reload nginx
 - 未登录访问四个工作区时进入 `/access`，业务 API 返回 HTTP 401。
 - 有效邀请码可建立 HttpOnly Cookie 会话，退出、禁用和撤销后会话失效。
 - Redis 容器没有宿主机端口映射，Redis 中不存在邀请码或会话令牌明文。
+- 外部伪造 `X-Real-IP` / `X-Forwarded-For` 不会覆盖 Nginx 写入的真实连接地址，Redis 只出现 IP HMAC。
+- 5 次/分钟用户限制、20 次/分钟 IP 限制、60 单位日额度和 8 并发保护符合环境配置。
+- 使用测试预算验证 90% 高费用降级与 100% 全量熔断；验证 `/api/health` 和历史记录不受影响。
+- 停止 Redis 后，AI API 和邀请码兑换返回 503；恢复后持久化计数仍存在。
 
 ## 8. 更新与回滚
 
@@ -106,7 +153,7 @@ docker compose -f compose.production.yml up -d --build
 
 ## 9. 公测前仍需完成
 
-- 增加应用层限流与费用配额，避免仅依赖 Nginx IP 限流。
+- 增加正式监控告警接收端；当前 70% warning 仅输出一次脱敏服务端日志。
 - 为所有接收用户材料的接口增加日志脱敏、请求追踪和错误监控。
 - 制定用户内容删除、密钥轮换、数据备份和安全事件响应流程。
 - 若开启账号或跨设备同步，将文件会话存储迁移到数据库与对象存储。

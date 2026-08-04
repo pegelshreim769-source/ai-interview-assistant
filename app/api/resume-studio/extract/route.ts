@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../../lib/beta-usage/api-guard";
 import { extractUploadedMaterial, type MaterialExtractKind } from "../../../lib/server/material-extraction";
 
 export const runtime = "nodejs";
@@ -19,12 +19,12 @@ async function handlePost(request: Request) {
     }
 
     return NextResponse.json(await extractUploadedMaterial(kind as MaterialExtractKind, file));
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "材料提取失败，请重新上传或直接粘贴文本。" },
+      { error: "材料提取失败，请重新上传或直接粘贴文本。" },
       { status: 500 }
     );
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "resume_studio_extract" }, handlePost);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../lib/beta-usage/api-guard";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { parseJsonObject, readAssistantTextContent } from "../../lib/server/json-output";
 import { LIMITS } from "../../lib/shared/limits";
@@ -312,9 +312,12 @@ async function handlePost(request: Request) {
     return NextResponse.json({ error: "不支持的简历工作台动作。" }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "简历工作台暂时不可用，请稍后再试。";
-    const status = /请先|缺少|最多支持|版本|不能|尚未/.test(message) ? 400 : 500;
-    return NextResponse.json({ error: message }, { status });
+    const isUserInputError = /请先|缺少|最多支持|版本|不能|尚未/.test(message);
+    return NextResponse.json(
+      { error: isUserInputError ? message : "简历工作台暂时不可用，请稍后再试。" },
+      { status: isUserInputError ? 400 : 500 }
+    );
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "resume_studio" }, handlePost);

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../lib/beta-usage/api-guard";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { parseJsonObject, readAssistantTextContent } from "../../lib/server/json-output";
 import { LIMITS } from "../../lib/shared/limits";
@@ -285,7 +285,10 @@ async function handlePost(request: Request) {
     const providerResult = await requestInterviewTurn(prompt);
 
     if (!providerResult.ok) {
-      return NextResponse.json({ error: providerResult.error }, { status: providerResult.status || 500 });
+      return NextResponse.json(
+        { error: "模拟面试服务暂时不可用，请稍后再试。" },
+        { status: providerResult.status || 500 }
+      );
     }
 
     const payload = providerResult.payload;
@@ -307,9 +310,9 @@ async function handlePost(request: Request) {
     }
 
     return NextResponse.json(parsed);
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "模拟面试服务暂时不可用，请稍后再试。" }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "模拟面试服务暂时不可用，请稍后再试。" }, { status: 500 });
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "mock_interview" }, handlePost);

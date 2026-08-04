@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../../lib/beta-usage/api-guard";
 import { extractUploadedMaterial, type MaterialExtractKind } from "../../../lib/server/material-extraction";
 
 export const runtime = "nodejs";
@@ -19,12 +19,12 @@ async function handlePost(request: Request) {
     }
 
     return NextResponse.json(await extractUploadedMaterial(kind as MaterialExtractKind, file));
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "提取失败，请尝试重新上传，或直接粘贴文本内容。" },
+      { error: "提取失败，请尝试重新上传，或直接粘贴文本内容。" },
       { status: 500 }
     );
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "custom_interview_extract" }, handlePost);

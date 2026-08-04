@@ -60,6 +60,34 @@ services:
       redis:
         condition: service_healthy
 
+  beta-usage-redis-test:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: invite-admin
+    entrypoint: ["node", "--conditions=react-server", "--import", "tsx", "scripts/verify-beta-usage-redis.ts"]
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  beta-usage-http-test:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: invite-admin
+    entrypoint: ["node", "--conditions=react-server", "--import", "tsx", "scripts/verify-beta-usage-http.ts"]
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   session_data:
   redis_data:

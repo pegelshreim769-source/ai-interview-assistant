@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../lib/beta-usage/api-guard";
 import { LIMITS } from "../../lib/shared/limits";
 import type {
   CustomInterviewDebugTrace,
@@ -658,14 +658,12 @@ async function handlePost(request: Request) {
     }
 
     return NextResponse.json({ error: "不支持的定制面试动作。" }, { status: 400 });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "定制面试暂时不可用，请稍后再试。"
-      },
+      { error: "定制面试暂时不可用，请稍后再试。" },
       { status: 500 }
     );
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "custom_interview" }, handlePost);

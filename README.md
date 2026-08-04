@@ -166,11 +166,64 @@ NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false
 
 REDIS_URL=redis://127.0.0.1:6379
 BETA_SESSION_DAYS=14
+
+BETA_USER_AI_RPM=5
+BETA_IP_AI_RPM=20
+BETA_USER_DAILY_UNITS=60
+BETA_GLOBAL_AI_CONCURRENCY=8
+BETA_ESTIMATED_CNY_PER_UNIT=0.20
+BETA_DAILY_AI_BUDGET_CNY=20
+BETA_MONTHLY_AI_BUDGET_CNY=300
+BETA_BUDGET_TIMEZONE=Asia/Shanghai
+BETA_IP_HASH_SECRET=replace_with_a_long_random_secret
 ```
 
 建议在 Beta 阶段保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`，优先使用浏览器本地存储。
 
 `REDIS_URL` 和 `BETA_SESSION_DAYS` 仅在服务端使用。生产 Compose 中应使用 `redis://redis:6379`；浏览器 Cookie 只保存不可预测的会话令牌，令牌不会写入 localStorage 或 sessionStorage。
+
+`BETA_IP_HASH_SECRET` 也只允许在服务端使用。生产环境必须替换模板值，并使用至少 32 字节的安全随机密钥，例如：
+
+```bash
+openssl rand -hex 32
+```
+
+生产环境缺少密钥、限额或预算配置非法，以及 Redis 不可用时，高费用请求都会默认拒绝并返回 HTTP 503，不会退化成无限调用。
+
+## Beta 限流、配额与预算保护
+
+所有 AI 业务接口统一执行以下服务端保护，不依赖按钮状态或浏览器存储：
+
+- 单个匿名会话每分钟最多 `BETA_USER_AI_RPM` 次，默认 5 次。
+- 单个可信 IP 每分钟最多 `BETA_IP_AI_RPM` 次，默认 20 次。
+- 单个匿名会话每天最多 `BETA_USER_DAILY_UNITS` 个费用单位，默认 60；按 `BETA_BUDGET_TIMEZONE` 的自然日重置。
+- 全站最多同时执行 `BETA_GLOBAL_AI_CONCURRENCY` 个 AI 请求，默认 8。
+- 邀请码兑换按 IP 每 10 分钟最多尝试 5 次。
+- 日/月预算分别由 `BETA_DAILY_AI_BUDGET_CNY` 与 `BETA_MONTHLY_AI_BUDGET_CNY` 设置。
+
+费用单位集中配置如下：
+
+| 接口 | 单次单位 | 高费用 |
+| --- | ---: | --- |
+| `/api/analyze` | 1 | 否 |
+| `/api/mock-interview` | 1 | 否 |
+| `/api/custom-interview` | 2 | 是 |
+| `/api/custom-interview/extract` | 2 | 是 |
+| `/api/resume-studio` | 2 | 是 |
+| `/api/resume-studio/extract` | 2 | 是 |
+| `/api/transcribe` | 2 | 是 |
+| `/api/mock-interview/transcribe` | 2 | 是 |
+
+`/api/sessions/[mode]`、`/api/access/*` 和 `/api/health` 不消耗费用单位。分钟请求计数在参数解析前累计；通过鉴权、分钟限制和并发检查后，费用单位会在业务处理开始前原子预扣，因此进入 Handler 后即使参数错误或第三方调用失败也不会退还。鉴权或费用保护本身失败不会扣减。
+
+估算金额按 `BETA_ESTIMATED_CNY_PER_UNIT` 转换为整数“分”累计。它只是产品保护用的固定估算，**不等于模型厂商实际账单**：
+
+- 低于 70%：正常服务。
+- 达到 70%：继续服务，每个日/月周期只记录一次脱敏 warning。
+- 达到 90%：暂停所有 2 单位高费用功能，1 单位功能继续服务。
+- 达到 100%：拒绝所有新的 AI 请求；页面、邀请码、退出、历史记录与健康检查仍可用。
+
+调整限制时只修改服务端环境变量并重启应用，不要把真实密钥提交到 Git。测试环境需要重置时，只删除 `interview-studio:usage-test:*` 或明确测试命名空间的 Key；生产环境不得执行 `FLUSHALL`，也不要随意删除全部 `interview-studio:usage:*` Key。
 
 ## 封闭 Beta 邀请码
 
@@ -216,12 +269,24 @@ npm run dev        # 启动本地开发服务
 npm run lint       # ESLint 检查
 npm run typecheck  # TypeScript 类型检查
 npm test           # 简历事实与证据校验测试
+npm run test:redis-usage # 在 REDIS_URL 指向的测试 Redis 中验证 Lua 原子操作
 npm run build      # 生产构建
 npm run start      # 启动生产服务
 npm run invite:create  # 创建封闭 Beta 邀请码
 npm run invite:list    # 查看邀请码状态
 npm run invite:disable -- <invite-id> # 禁用邀请码
 npm run invite:revoke -- <invite-id>  # 撤销邀请码及关联会话
+```
+
+容器级 HTTP 验收器只允许在隔离测试环境运行，并要求显式设置 `BETA_ACCEPTANCE_TEST=true`。它会清理隔离环境中的 `interview-studio:usage:*` 测试计数，禁止在生产环境启用：
+
+```bash
+docker compose --profile tools -f compose.production.yml run --rm beta-usage-http-test rate
+docker compose --profile tools -f compose.production.yml run --rm beta-usage-http-test quota
+docker compose --profile tools -f compose.production.yml run --rm beta-usage-http-test budget
+
+# 仅在 Redis 已停止时验证 fail-closed；不读取或清理 Redis
+docker compose --profile tools -f compose.production.yml run --rm --no-deps beta-usage-http-test redis-unavailable
 ```
 
 ## 中国境内部署
@@ -266,6 +331,7 @@ docker compose -f compose.production.yml up -d --build
 - OCR、文件提取和语音转写效果受材料质量、浏览器权限与网络状态影响。
 - 当前没有账号体系，不同设备之间不会自动同步本地记录。
 - 封闭 Beta 会话依赖 Redis；Redis 不可用时页面与业务 API 会默认拒绝访问，健康检查仍保持公开。
+- AI 限流、日额度、预算和并发租约依赖 Redis 持久化；Redis 不可用时 AI API 与邀请码兑换默认拒绝，健康检查仍公开。
 - 这是 Beta 版本，提示词、追问质量和定制面试稳定性仍会持续迭代。
 
 ## Roadmap

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { withBetaAccess } from "../../lib/beta-access/api-auth";
+import { withMeteredBetaAccess } from "../../lib/beta-usage/api-guard";
 import { getChatProviderConfig, requestChatCompletion } from "../../lib/server/ai-provider";
 import { LIMITS } from "../../lib/shared/limits";
 
@@ -291,8 +291,11 @@ async function handlePost(request: Request) {
     });
 
     if (!providerResponse.ok || !providerResponse.body) {
-      const errorText = await providerResponse.text();
-      return NextResponse.json({ error: errorText || "模型流式请求失败，请稍后再试。" }, { status: providerResponse.status || 500 });
+      await providerResponse.body?.cancel().catch(() => undefined);
+      return NextResponse.json(
+        { error: "模型流式请求失败，请稍后再试。" },
+        { status: providerResponse.status || 500 }
+      );
     }
 
     const stream = new ReadableStream({
@@ -345,9 +348,12 @@ async function handlePost(request: Request) {
 
           controller.enqueue(encoderChunk("event: done\ndata: done\n\n"));
           controller.close();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "流式生成失败";
-          controller.enqueue(encoderChunk(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`));
+        } catch {
+          controller.enqueue(
+            encoderChunk(
+              `event: error\ndata: ${JSON.stringify({ error: "流式生成失败，请稍后再试。" })}\n\n`
+            )
+          );
           controller.close();
         }
       }
@@ -360,9 +366,9 @@ async function handlePost(request: Request) {
         Connection: "keep-alive"
       }
     });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "服务端分析失败，请稍后再试。" }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "服务端分析失败，请稍后再试。" }, { status: 500 });
   }
 }
 
-export const POST = withBetaAccess(handlePost);
+export const POST = withMeteredBetaAccess({ endpoint: "analyze" }, handlePost);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { closeBetaRedisClient, getBetaRedisClient } from "../app/lib/beta-access/redis-client";
 import { RedisBetaUsageStore } from "../app/lib/beta-usage/redis-store";
 import { getBetaAccessService } from "../app/lib/beta-access/server";
+import { currentPolicyVersion } from "../app/lib/compliance/config";
 
 const baseUrl = process.env.BETA_ACCEPTANCE_BASE_URL || "http://app:3000";
 const mode = process.argv[2] || "rate";
@@ -31,9 +32,16 @@ async function redeem(code: string, ip: string) {
   const response = await request("/api/access/redeem", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Real-IP": ip },
-    body: JSON.stringify({ invitation_code: code })
+    body: JSON.stringify({
+      invitation_code: code,
+      accept_policies: true,
+      policy_version: currentPolicyVersion()
+    })
   });
-  assert.equal(response.status, 200);
+  if (response.status !== 200) {
+    const payload = await json(response.clone());
+    throw new Error(`Redeem failed with HTTP ${response.status}, code=${payload.code || "UNKNOWN"}.`);
+  }
   return cookieFrom(response);
 }
 
@@ -69,6 +77,22 @@ async function cleanupUsageKeys() {
 }
 
 async function runRateChecks(code: string) {
+  const missingConsent = await request("/api/access/redeem", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Real-IP": "198.51.100.8" },
+    body: JSON.stringify({ invitation_code: code, accept_policies: false, policy_version: currentPolicyVersion() })
+  });
+  assert.equal(missingConsent.status, 400);
+  assert.equal((await json(missingConsent)).code, "BETA_POLICY_ACCEPTANCE_REQUIRED");
+
+  const wrongVersion = await request("/api/access/redeem", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Real-IP": "198.51.100.9" },
+    body: JSON.stringify({ invitation_code: code, accept_policies: true, policy_version: "outdated-canary" })
+  });
+  assert.equal(wrongVersion.status, 400);
+  assert.equal((await json(wrongVersion)).code, "BETA_POLICY_ACCEPTANCE_REQUIRED");
+
   const cookies = await Promise.all(
     Array.from({ length: 5 }, (_, index) => redeem(code, `198.51.100.${index + 1}`))
   );
@@ -97,14 +121,14 @@ async function runRateChecks(code: string) {
     const response = await request("/api/access/redeem", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Real-IP": "198.51.100.40" },
-      body: JSON.stringify({ invitation_code: "invalid-acceptance-code" })
+      body: JSON.stringify({ invitation_code: "invalid-acceptance-code", accept_policies: true, policy_version: currentPolicyVersion() })
     });
     assert.equal(response.status, 401);
   }
   const inviteLimited = await request("/api/access/redeem", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Real-IP": "198.51.100.40" },
-    body: JSON.stringify({ invitation_code: "invalid-acceptance-code" })
+    body: JSON.stringify({ invitation_code: "invalid-acceptance-code", accept_policies: true, policy_version: currentPolicyVersion() })
   });
   assert.equal(inviteLimited.status, 429);
   assert.equal((await json(inviteLimited)).code, "BETA_INVITATION_RATE_LIMITED");

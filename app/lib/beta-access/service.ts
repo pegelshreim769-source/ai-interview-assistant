@@ -18,6 +18,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 type BetaAccessServiceOptions = {
   store: BetaAccessStore;
   sessionDays?: number;
+  currentPolicyVersion?: string;
   now?: () => number;
   invitationCodeFactory?: () => string;
   invitationIdFactory?: () => string;
@@ -35,6 +36,7 @@ function normalizePositiveInteger(value: number | undefined, fallback: number, l
 export class BetaAccessService {
   private readonly store: BetaAccessStore;
   private readonly sessionDays: number;
+  private readonly currentPolicyVersion: string;
   private readonly now: () => number;
   private readonly invitationCodeFactory: () => string;
   private readonly invitationIdFactory: () => string;
@@ -43,6 +45,7 @@ export class BetaAccessService {
   constructor(options: BetaAccessServiceOptions) {
     this.store = options.store;
     this.sessionDays = normalizePositiveInteger(options.sessionDays, 14, "会话有效天数");
+    this.currentPolicyVersion = options.currentPolicyVersion ?? "local-unconfigured";
     this.now = options.now ?? Date.now;
     this.invitationCodeFactory = options.invitationCodeFactory ?? createInvitationCode;
     this.invitationIdFactory = options.invitationIdFactory ?? createInvitationId;
@@ -92,7 +95,13 @@ export class BetaAccessService {
     return this.store.revokeInvitation(inviteId, this.now());
   }
 
-  async redeemInvitation(rawCode: string): Promise<RedeemInvitationResult> {
+  async redeemInvitation(
+    rawCode: string,
+    acceptance: { accepted: boolean; policyVersion: string }
+  ): Promise<RedeemInvitationResult> {
+    if (!acceptance.accepted || acceptance.policyVersion !== this.currentPolicyVersion) {
+      return { status: "policy_not_accepted" };
+    }
     const code = normalizeInvitationCode(rawCode);
     if (!code || code.length > 512) return { status: "invalid" };
 
@@ -103,16 +112,41 @@ export class BetaAccessService {
       inviteHash: hashOpaqueSecret(code),
       sessionHash: hashOpaqueSecret(sessionToken),
       nowMs,
-      sessionExpiresAtMs
+      sessionExpiresAtMs,
+      policyVersion: this.currentPolicyVersion,
+      policyAcceptedAtMs: nowMs
     });
 
     if (result.status !== "redeemed") return result;
     return { status: "redeemed", sessionToken, expiresAtMs: sessionExpiresAtMs };
   }
 
-  validateSession(sessionToken: string): Promise<ValidateSessionResult> {
+  async validateSession(sessionToken: string): Promise<ValidateSessionResult> {
     if (!sessionToken || sessionToken.length > 512) return Promise.resolve({ status: "invalid" });
-    return this.store.validateSession(hashOpaqueSecret(sessionToken), this.now());
+    const result = await this.store.validateSession(hashOpaqueSecret(sessionToken), this.now());
+    if (result.status !== "valid") return result;
+    if (result.session.accepted_policy_version !== this.currentPolicyVersion) {
+      return { status: "policy_acceptance_required", session: result.session };
+    }
+    return result;
+  }
+
+  async acceptCurrentPolicy(sessionToken: string, acceptance: { accepted: boolean; policyVersion: string }) {
+    if (
+      !sessionToken ||
+      sessionToken.length > 512 ||
+      !acceptance.accepted ||
+      acceptance.policyVersion !== this.currentPolicyVersion
+    ) {
+      return { status: "invalid" } as const;
+    }
+    const nowMs = this.now();
+    return this.store.acceptSessionPolicy({
+      sessionHash: hashOpaqueSecret(sessionToken),
+      nowMs,
+      policyVersion: this.currentPolicyVersion,
+      policyAcceptedAtMs: nowMs
+    });
   }
 
   async logout(sessionToken: string) {

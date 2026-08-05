@@ -109,6 +109,19 @@ services:
       redis:
         condition: service_healthy
 
+  compliance-redis-test:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: invite-admin
+    entrypoint: ["node", "--conditions=react-server", "--import", "tsx", "scripts/verify-compliance-redis.ts"]
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      redis:
+        condition: service_healthy
+
   beta-usage-http-test:
     profiles: ["tools"]
     build:
@@ -116,6 +129,21 @@ services:
       dockerfile: Dockerfile
       target: invite-admin
     entrypoint: ["node", "--conditions=react-server", "--import", "tsx", "scripts/verify-beta-usage-http.ts"]
+    env_file:
+      - ${ENV_FILE:-.env.production}
+    depends_on:
+      app:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  compliance-http-test:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: invite-admin
+    entrypoint: ["node", "--conditions=react-server", "--import", "tsx", "scripts/verify-compliance-http.ts"]
     env_file:
       - ${ENV_FILE:-.env.production}
     depends_on:

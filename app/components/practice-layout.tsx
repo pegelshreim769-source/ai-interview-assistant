@@ -17,6 +17,8 @@ import {
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BrandLogo } from "./brand-logo";
+import { AiAssistanceNotice } from "./ai-assistance-notice";
+import { ComplianceFooter } from "./compliance-footer";
 
 type PracticeMode = "text" | "mock" | "custom" | "resume";
 type SidebarHistoryItem = {
@@ -290,7 +292,9 @@ export function PracticeLayout({
 
       <main className="app-main">
         <div className="app-main-toolbar" aria-hidden="true" />
+        <AiAssistanceNotice />
         {children}
+        <ComplianceFooter />
       </main>
     </div>
   );

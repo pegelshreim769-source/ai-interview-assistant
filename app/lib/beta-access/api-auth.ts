@@ -7,6 +7,7 @@ import type { BetaSessionRecord } from "./types";
 
 export const BETA_UNAUTHORIZED_ERROR = "封闭测试会话无效或已过期，请使用邀请码重新进入。";
 export const BETA_UNAVAILABLE_ERROR = "访问验证服务暂时不可用，请稍后再试。";
+export const BETA_POLICY_ERROR = "政策版本已更新，请重新阅读并确认用户协议和隐私政策。";
 
 export type BetaAccessDecision =
   | { status: "authorized"; session: BetaSessionRecord }
@@ -31,6 +32,15 @@ export async function requireBetaAccess(
   try {
     const result = await service.validateSession(token);
     if (result.status === "valid") return { status: "authorized", session: result.session };
+    if (result.status === "policy_acceptance_required") {
+      return {
+        status: "unauthorized",
+        response: Response.json(
+          { error: BETA_POLICY_ERROR, code: "BETA_POLICY_ACCEPTANCE_REQUIRED" },
+          { status: 401, headers: { "Cache-Control": "no-store" } }
+        )
+      };
+    }
     return {
       status: "unauthorized",
       response: Response.json(

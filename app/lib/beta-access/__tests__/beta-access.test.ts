@@ -56,6 +56,8 @@ class MemoryBetaAccessStore implements BetaAccessStore {
     sessionHash: string;
     nowMs: number;
     sessionExpiresAtMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
   }): Promise<RedeemStoreResult> {
     const invitation = this.invitations.get(input.inviteHash);
     if (!invitation) return { status: "invalid" };
@@ -69,7 +71,9 @@ class MemoryBetaAccessStore implements BetaAccessStore {
       invite_id: invitation.invite_id,
       invite_hash: input.inviteHash,
       created_at_ms: input.nowMs,
-      expires_at_ms: input.sessionExpiresAtMs
+      expires_at_ms: input.sessionExpiresAtMs,
+      accepted_policy_version: input.policyVersion,
+      policy_accepted_at_ms: input.policyAcceptedAtMs
     });
     const sessionHashes = this.inviteSessions.get(input.inviteHash) ?? new Set<string>();
     sessionHashes.add(input.sessionHash);
@@ -83,6 +87,20 @@ class MemoryBetaAccessStore implements BetaAccessStore {
     const invitation = this.invitations.get(session.invite_hash);
     if (!invitation || invitation.status !== "active") return { status: "invalid" };
     if (invitation.expires_at_ms !== null && invitation.expires_at_ms <= nowMs) return { status: "invalid" };
+    return { status: "valid", session: { ...session } };
+  }
+
+  async acceptSessionPolicy(input: {
+    sessionHash: string;
+    nowMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
+  }): Promise<ValidateSessionStoreResult> {
+    const validated = await this.validateSession(input.sessionHash, input.nowMs);
+    if (validated.status !== "valid") return validated;
+    const session = this.sessions.get(input.sessionHash)!;
+    session.accepted_policy_version = input.policyVersion;
+    session.policy_accepted_at_ms = input.policyAcceptedAtMs;
     return { status: "valid", session: { ...session } };
   }
 
@@ -101,6 +119,7 @@ function createFixture(options: { maxUses?: number; expiresAtMs?: number | null;
   const service = new BetaAccessService({
     store,
     sessionDays: options.sessionDays ?? 14,
+    currentPolicyVersion: "v-test",
     now: () => nowMs,
     invitationCodeFactory: () => invitationCode,
     invitationIdFactory: () => "inv_test",
@@ -115,6 +134,7 @@ function createFixture(options: { maxUses?: number; expiresAtMs?: number | null;
     setNow: (value: number) => {
       nowMs = value;
     },
+    redeem: (code = invitationCode) => service.redeemInvitation(code, { accepted: true, policyVersion: "v-test" }),
     create: () => service.createInvitation({ maxUses: options.maxUses, expiresAtMs: options.expiresAtMs })
   };
 }
@@ -130,45 +150,90 @@ test("邀请码哈希后不保存明文", async () => {
 test("正确邀请码可以兑换，Redis 替身只保存会话哈希", async () => {
   const fixture = createFixture();
   await fixture.create();
-  const result = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const result = await fixture.redeem();
   assert.equal(result.status, "redeemed");
   if (result.status !== "redeemed") return;
   assert.equal(fixture.store.sessions.has(result.sessionToken), false);
   assert.equal(fixture.store.sessions.has(hashOpaqueSecret(result.sessionToken)), true);
+  const storedSession = fixture.store.sessions.get(hashOpaqueSecret(result.sessionToken));
+  assert.equal(storedSession?.accepted_policy_version, "v-test");
+  assert.equal(storedSession?.policy_accepted_at_ms, fixture.now());
+  const serialized = JSON.stringify(storedSession);
+  assert.equal(serialized.includes(fixture.invitationCode), false);
+  assert.equal(serialized.includes("raw_ip"), false);
+});
+
+test("未确认协议时服务端拒绝兑换且不消耗邀请码", async () => {
+  const fixture = createFixture();
+  await fixture.create();
+  const result = await fixture.service.redeemInvitation(fixture.invitationCode, {
+    accepted: false,
+    policyVersion: "v-test"
+  });
+  assert.equal(result.status, "policy_not_accepted");
+  assert.equal(fixture.store.invitations.get(hashOpaqueSecret(fixture.invitationCode))?.uses, 0);
+  assert.equal(fixture.store.sessions.size, 0);
+});
+
+test("错误政策版本被服务端拒绝", async () => {
+  const fixture = createFixture();
+  await fixture.create();
+  const result = await fixture.service.redeemInvitation(fixture.invitationCode, {
+    accepted: true,
+    policyVersion: "outdated-version"
+  });
+  assert.equal(result.status, "policy_not_accepted");
+  assert.equal(fixture.store.sessions.size, 0);
+});
+
+test("旧会话与政策升级会要求重新确认，确认后恢复且不重复使用邀请码", async () => {
+  const fixture = createFixture();
+  await fixture.create();
+  const redeemed = await fixture.redeem();
+  assert.equal(redeemed.status, "redeemed");
+  if (redeemed.status !== "redeemed") return;
+  const sessionHash = hashOpaqueSecret(redeemed.sessionToken);
+  const session = fixture.store.sessions.get(sessionHash)!;
+  delete session.accepted_policy_version;
+  delete session.policy_accepted_at_ms;
+  assert.equal((await fixture.service.validateSession(redeemed.sessionToken)).status, "policy_acceptance_required");
+  assert.equal((await fixture.service.acceptCurrentPolicy(redeemed.sessionToken, { accepted: true, policyVersion: "v-test" })).status, "valid");
+  assert.equal((await fixture.service.validateSession(redeemed.sessionToken)).status, "valid");
+  assert.equal(fixture.store.invitations.get(hashOpaqueSecret(fixture.invitationCode))?.uses, 1);
 });
 
 test("错误邀请码被拒绝", async () => {
   const fixture = createFixture();
   await fixture.create();
-  assert.equal((await fixture.service.redeemInvitation("wrong-code")).status, "invalid");
+  assert.equal((await fixture.redeem("wrong-code")).status, "invalid");
 });
 
 test("过期邀请码被拒绝", async () => {
   const fixture = createFixture({ expiresAtMs: 1_800_000_001_000 });
   await fixture.create();
   fixture.setNow(1_800_000_002_000);
-  assert.equal((await fixture.service.redeemInvitation(fixture.invitationCode)).status, "expired");
+  assert.equal((await fixture.redeem()).status, "expired");
 });
 
 test("禁用邀请码被拒绝", async () => {
   const fixture = createFixture();
   const created = await fixture.create();
   await fixture.service.disableInvitation(created.invitation.invite_id);
-  assert.equal((await fixture.service.redeemInvitation(fixture.invitationCode)).status, "disabled");
+  assert.equal((await fixture.redeem()).status, "disabled");
 });
 
 test("超过最大使用次数后被拒绝", async () => {
   const fixture = createFixture({ maxUses: 1 });
   await fixture.create();
-  assert.equal((await fixture.service.redeemInvitation(fixture.invitationCode)).status, "redeemed");
-  assert.equal((await fixture.service.redeemInvitation(fixture.invitationCode)).status, "max_uses_reached");
+  assert.equal((await fixture.redeem()).status, "redeemed");
+  assert.equal((await fixture.redeem()).status, "max_uses_reached");
 });
 
 test("并发兑换不会突破最大使用次数", async () => {
   const fixture = createFixture({ maxUses: 3 });
   await fixture.create();
   const results = await Promise.all(
-    Array.from({ length: 20 }, () => fixture.service.redeemInvitation(fixture.invitationCode))
+    Array.from({ length: 20 }, () => fixture.redeem())
   );
   assert.equal(results.filter((result) => result.status === "redeemed").length, 3);
   assert.equal(fixture.store.invitations.get(hashOpaqueSecret(fixture.invitationCode))?.uses, 3);
@@ -177,7 +242,7 @@ test("并发兑换不会突破最大使用次数", async () => {
 test("有效会话可以通过鉴权", async () => {
   const fixture = createFixture();
   await fixture.create();
-  const redeemed = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const redeemed = await fixture.redeem();
   assert.equal(redeemed.status, "redeemed");
   if (redeemed.status !== "redeemed") return;
   assert.equal((await fixture.service.validateSession(redeemed.sessionToken)).status, "valid");
@@ -192,7 +257,7 @@ test("伪造会话令牌被拒绝", async () => {
 test("过期会话被拒绝", async () => {
   const fixture = createFixture({ sessionDays: 1 });
   await fixture.create();
-  const redeemed = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const redeemed = await fixture.redeem();
   assert.equal(redeemed.status, "redeemed");
   if (redeemed.status !== "redeemed") return;
   fixture.setNow(fixture.now() + 24 * 60 * 60 * 1000 + 1);
@@ -202,7 +267,7 @@ test("过期会话被拒绝", async () => {
 test("退出后会话立即失效", async () => {
   const fixture = createFixture();
   await fixture.create();
-  const redeemed = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const redeemed = await fixture.redeem();
   assert.equal(redeemed.status, "redeemed");
   if (redeemed.status !== "redeemed") return;
   await fixture.service.logout(redeemed.sessionToken);
@@ -212,7 +277,7 @@ test("退出后会话立即失效", async () => {
 test("撤销邀请码后关联会话失效", async () => {
   const fixture = createFixture();
   const created = await fixture.create();
-  const redeemed = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const redeemed = await fixture.redeem();
   assert.equal(redeemed.status, "redeemed");
   if (redeemed.status !== "redeemed") return;
   const revoked = await fixture.service.revokeInvitation(created.invitation.invite_id);
@@ -223,7 +288,7 @@ test("撤销邀请码后关联会话失效", async () => {
 test("禁用邀请码后关联会话失效", async () => {
   const fixture = createFixture();
   const created = await fixture.create();
-  const redeemed = await fixture.service.redeemInvitation(fixture.invitationCode);
+  const redeemed = await fixture.redeem();
   assert.equal(redeemed.status, "redeemed");
   if (redeemed.status !== "redeemed") return;
   await fixture.service.disableInvitation(created.invitation.invite_id);

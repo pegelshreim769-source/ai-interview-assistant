@@ -18,6 +18,8 @@ export type BetaSessionRecord = {
   invite_hash: string;
   created_at_ms: number;
   expires_at_ms: number;
+  accepted_policy_version?: string;
+  policy_accepted_at_ms?: number;
 };
 
 export type RedeemStoreResult =
@@ -38,8 +40,16 @@ export interface BetaAccessStore {
     sessionHash: string;
     nowMs: number;
     sessionExpiresAtMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
   }): Promise<RedeemStoreResult>;
   validateSession(sessionHash: string, nowMs: number): Promise<ValidateSessionStoreResult>;
+  acceptSessionPolicy(input: {
+    sessionHash: string;
+    nowMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
+  }): Promise<ValidateSessionStoreResult>;
   deleteSession(sessionHash: string): Promise<void>;
 }
 
@@ -50,8 +60,9 @@ export type CreateInvitationInput = {
 
 export type RedeemInvitationResult =
   | { status: "redeemed"; sessionToken: string; expiresAtMs: number }
-  | { status: "invalid" | "expired" | "disabled" | "max_uses_reached" };
+  | { status: "invalid" | "expired" | "disabled" | "max_uses_reached" | "policy_not_accepted" };
 
 export type ValidateSessionResult =
   | { status: "valid"; session: BetaSessionRecord }
+  | { status: "policy_acceptance_required"; session: BetaSessionRecord }
   | { status: "invalid" };

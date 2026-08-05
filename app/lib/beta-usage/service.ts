@@ -13,6 +13,7 @@ import type {
   UsageReservationResult
 } from "./types";
 import type { BetaAiEndpointPolicy } from "./costs";
+import type { BudgetSnapshot, BudgetStatus } from "../observability/types";
 
 type BetaUsageServiceOptions = {
   store: BetaUsageStore;
@@ -34,7 +35,7 @@ export class BetaUsageService {
     this.config = options.config;
     this.now = options.now ?? Date.now;
     this.idFactory = options.idFactory ?? (() => randomBytes(16).toString("hex"));
-    this.warningLogger = options.warningLogger ?? ((message) => console.warn(message));
+    this.warningLogger = options.warningLogger ?? (() => undefined);
   }
 
   recordAiAttempt(identity: AnonymousUsageIdentity): Promise<RateLimitResult> {
@@ -96,5 +97,26 @@ export class BetaUsageService {
 
   async releaseConcurrencyLease(leaseId: string) {
     await this.store.releaseConcurrencyLease(leaseId);
+  }
+
+  async readBudgetSnapshot(): Promise<BudgetSnapshot> {
+    if (!this.store.readBudgetUsage) throw new Error("Budget reader is unavailable.");
+    const periods = getUsagePeriods(this.now(), this.config.budgetTimezone);
+    const values = await this.store.readBudgetUsage({
+      dayKey: periods.dayKey,
+      monthKey: periods.monthKey
+    });
+    const item = (usedCents: number, budgetCents: number) => {
+      const percentage = budgetCents > 0 ? Math.min(999, (usedCents / budgetCents) * 100) : 100;
+      let status: BudgetStatus = "normal";
+      if (percentage >= 100) status = "exhausted";
+      else if (percentage >= 90) status = "reduced";
+      else if (percentage >= 70) status = "warning";
+      return { usedCents, budgetCents, percentage, status };
+    };
+    return {
+      day: item(values.dayCents, this.config.dailyBudgetCents),
+      month: item(values.monthCents, this.config.monthlyBudgetCents)
+    };
   }
 }

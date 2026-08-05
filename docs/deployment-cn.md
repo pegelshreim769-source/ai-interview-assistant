@@ -158,3 +158,19 @@ docker compose -f compose.production.yml up -d --build
 - 制定用户内容删除、密钥轮换、数据备份和安全事件响应流程。
 - 若开启账号或跨设备同步，将文件会话存储迁移到数据库与对象存储。
 - 对隐私政策、AI 生成内容标识、备案和数据处理安排进行正式合规审查。
+
+# 管理指标与脱敏日志
+
+生产环境必须额外设置 `BETA_METRICS_HOURLY_RETENTION_HOURS=168`、`BETA_METRICS_DAILY_RETENTION_DAYS=90`、`ADMIN_SESSION_HOURS=8` 和由 `npm run admin:token:create` 生成的 `ADMIN_ACCESS_TOKEN_HASH`。明文管理员令牌只通过安全渠道保存，不写入 Git、日志或浏览器存储。
+
+访问 `/admin/login` 建立独立 Redis 管理会话后，可在 `/admin/usage` 查看匿名聚合指标。登录按 Nginx 覆盖写入的 `X-Real-IP` 做 HMAC 限制，每个 IP 15 分钟最多 5 次；Redis 或管理配置异常时默认拒绝。使用 `npm run admin:sessions:revoke`（Compose 中为 `docker compose -f compose.production.yml run --rm admin-tools sessions-revoke`）可撤销当前管理员哈希关联的全部会话。
+
+应用只输出字段白名单单行 JSON，不记录简历、JD、回答、语音/转写、提示词、模型响应、请求体、请求头全集、Cookie、邀请码、令牌、原始 IP、完整匿名标识、异常堆栈或 Redis 密码。指标使用 `interview-studio:metrics:v1` 的小时/日 Hash 与匿名 HyperLogLog，默认分别保留 168 小时和 90 天。估算费用来自任务二预算总账和固定费用单位，不等于模型厂商实际账单。
+
+app 与 Redis 容器日志均配置为 `json-file`，`max-size=10m`、`max-file=3`。查看方式：
+
+```bash
+docker compose -f compose.production.yml logs --tail=200 app redis
+```
+
+测试清理只能操作部署时明确设置的测试命名空间，禁止在生产 Redis 使用 `FLUSHALL`、`KEYS *` 或删除全部 `interview-studio:*`。

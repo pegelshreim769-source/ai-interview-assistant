@@ -231,4 +231,13 @@ export class RedisBetaUsageStore implements BetaUsageStore {
     const client = await this.clientProvider();
     await client.zRem(`${this.prefix}:concurrency:leases`, leaseId);
   }
+
+  async readBudgetUsage(input: { dayKey: string; monthKey: string }) {
+    const client = await this.clientProvider();
+    const [day, month] = await client.mGet([
+      `${this.prefix}:budget:day:${input.dayKey}`,
+      `${this.prefix}:budget:month:${input.monthKey}`
+    ]);
+    return { dayCents: Number(day || 0), monthCents: Number(month || 0) };
+  }
 }

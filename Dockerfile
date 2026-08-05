@@ -5,7 +5,7 @@ WORKDIR /app
 
 FROM base AS dependencies
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=optional
 
 FROM dependencies AS invite-admin
 COPY . .

@@ -51,7 +51,9 @@ redis.call('HSET', KEYS[2],
   'invite_id', inviteId,
   'invite_hash', ARGV[2],
   'created_at_ms', ARGV[1],
-  'expires_at_ms', ARGV[3])
+  'expires_at_ms', ARGV[3],
+  'accepted_policy_version', ARGV[5],
+  'policy_accepted_at_ms', ARGV[6])
 redis.call('PEXPIREAT', KEYS[2], ARGV[3])
 redis.call('SADD', KEYS[3], ARGV[4])
 redis.call('PEXPIREAT', KEYS[3], ARGV[3])
@@ -76,7 +78,35 @@ return {1,
   redis.call('HGET', KEYS[1], 'invite_id'),
   inviteHash,
   redis.call('HGET', KEYS[1], 'created_at_ms'),
-  sessionExpiresAt}
+  sessionExpiresAt,
+  redis.call('HGET', KEYS[1], 'accepted_policy_version') or '',
+  redis.call('HGET', KEYS[1], 'policy_accepted_at_ms') or ''}
+`;
+
+const ACCEPT_SESSION_POLICY_SCRIPT = `
+if redis.call('EXISTS', KEYS[1]) == 0 then return {0} end
+local sessionExpiresAt = redis.call('HGET', KEYS[1], 'expires_at_ms')
+if not sessionExpiresAt or tonumber(sessionExpiresAt) <= tonumber(ARGV[1]) then
+  redis.call('DEL', KEYS[1])
+  return {0}
+end
+local inviteHash = redis.call('HGET', KEYS[1], 'invite_hash')
+if not inviteHash then return {0} end
+local inviteKey = ARGV[2] .. inviteHash
+if redis.call('EXISTS', inviteKey) == 0 then return {0} end
+if redis.call('HGET', inviteKey, 'status') ~= 'active' then return {0} end
+local inviteExpiresAt = redis.call('HGET', inviteKey, 'expires_at_ms')
+if inviteExpiresAt and inviteExpiresAt ~= '' and tonumber(inviteExpiresAt) <= tonumber(ARGV[1]) then return {0} end
+redis.call('HSET', KEYS[1],
+  'accepted_policy_version', ARGV[3],
+  'policy_accepted_at_ms', ARGV[4])
+return {1,
+  redis.call('HGET', KEYS[1], 'invite_id'),
+  inviteHash,
+  redis.call('HGET', KEYS[1], 'created_at_ms'),
+  sessionExpiresAt,
+  ARGV[3],
+  ARGV[4]}
 `;
 
 const DELETE_SESSION_SCRIPT = `
@@ -187,6 +217,8 @@ export class RedisBetaAccessStore implements BetaAccessStore {
     sessionHash: string;
     nowMs: number;
     sessionExpiresAtMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
   }): Promise<RedeemStoreResult> {
     const client = await this.clientProvider();
     const result = Number(
@@ -200,7 +232,9 @@ export class RedisBetaAccessStore implements BetaAccessStore {
           String(input.nowMs),
           input.inviteHash,
           String(input.sessionExpiresAtMs),
-          input.sessionHash
+          input.sessionHash,
+          input.policyVersion,
+          String(input.policyAcceptedAtMs)
         ]
       })
     );
@@ -226,9 +260,42 @@ export class RedisBetaAccessStore implements BetaAccessStore {
       invite_id: String(result[1]),
       invite_hash: String(result[2]),
       created_at_ms: Number(result[3]),
-      expires_at_ms: Number(result[4])
+      expires_at_ms: Number(result[4]),
+      ...(result[5] ? { accepted_policy_version: String(result[5]) } : {}),
+      ...(result[6] ? { policy_accepted_at_ms: Number(result[6]) } : {})
     };
     return { status: "valid", session };
+  }
+
+  async acceptSessionPolicy(input: {
+    sessionHash: string;
+    nowMs: number;
+    policyVersion: string;
+    policyAcceptedAtMs: number;
+  }): Promise<ValidateSessionStoreResult> {
+    const client = await this.clientProvider();
+    const result = (await client.eval(ACCEPT_SESSION_POLICY_SCRIPT, {
+      keys: [sessionKey(input.sessionHash)],
+      arguments: [
+        String(input.nowMs),
+        `${PREFIX}:invite:`,
+        input.policyVersion,
+        String(input.policyAcceptedAtMs)
+      ]
+    })) as Array<string | number>;
+    if (!Array.isArray(result) || Number(result[0]) !== 1) return { status: "invalid" };
+    return {
+      status: "valid",
+      session: {
+        session_hash: input.sessionHash,
+        invite_id: String(result[1]),
+        invite_hash: String(result[2]),
+        created_at_ms: Number(result[3]),
+        expires_at_ms: Number(result[4]),
+        accepted_policy_version: String(result[5]),
+        policy_accepted_at_ms: Number(result[6])
+      }
+    };
   }
 
   async deleteSession(sessionHash: string) {

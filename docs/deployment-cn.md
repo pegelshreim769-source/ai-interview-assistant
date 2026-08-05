@@ -33,6 +33,30 @@ chmod 600 .env.production
 
 编辑 `.env.production`，替换模型密钥和 `BETA_IP_HASH_SECRET`，并保持 `REDIS_URL=redis://redis:6379`。可以用 `openssl rand -hex 32` 生成 IP HMAC 密钥。`BETA_SESSION_DAYS` 用于设置封闭测试会话有效天数。不得将真实密钥提交到 Git、写进镜像或发送到前端。
 
+同时填写以下公开运营信息。它们由服务器在请求时读取，不应使用 `NEXT_PUBLIC_`：
+
+| 变量 | 上线前确认人 | 含义 |
+| --- | --- | --- |
+| `PUBLIC_OPERATOR_NAME` | 产品经理/运营方 | 真实运营主体名称 |
+| `PUBLIC_CONTACT_EMAIL` | 产品经理/运营方 | 个人信息请求和投诉邮箱 |
+| `PUBLIC_POLICY_VERSION` | 产品经理/专业顾问 | 当前协议与政策版本；变化后会要求重新确认 |
+| `PUBLIC_POLICY_EFFECTIVE_DATE` | 产品经理/专业顾问 | 生效日期，`YYYY-MM-DD` |
+| `PUBLIC_POLICY_UPDATED_DATE` | 产品经理/专业顾问 | 更新日期，`YYYY-MM-DD` |
+| `PUBLIC_AI_PROVIDER_NAME` | 产品经理/采购 | 实际聊天及文件解析服务商 |
+| `PUBLIC_CHAT_MODEL_NAME` | 产品经理/工程 | 实际聊天模型名称 |
+| `PUBLIC_ASR_PROVIDER_NAME` | 产品经理/采购 | 实际语音识别服务商 |
+| `PUBLIC_ASR_MODEL_NAME` | 产品经理/工程 | 实际语音识别模型名称 |
+| `PUBLIC_MODEL_FILING_INFO` | 专业顾问/运营方 | 经核验的备案或登记信息；不得编造 |
+| `PUBLIC_COMPLAINT_RESPONSE_DAYS` | 产品经理/专业顾问 | 对外展示的预计反馈自然日，1—90 |
+
+填写后必须运行：
+
+```bash
+npm run compliance:check
+```
+
+检查会拒绝缺失值、模板占位符、非法格式及 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=true`。普通 `npm run build` 不因占位信息失败，但没有通过合规配置检查不得进入正式发布流程。
+
 费用保护变量及默认值：
 
 | 变量 | 默认值 | 含义 |
@@ -52,6 +76,7 @@ chmod 600 .env.production
 ## 4. 首次发布
 
 ```bash
+npm run compliance:check
 docker compose -f compose.production.yml build
 docker compose -f compose.production.yml up -d
 docker compose -f compose.production.yml ps
@@ -132,6 +157,12 @@ IP 识别规则：合法 IPv4 会规范化十进制分段，IPv6 会压缩并转
 - `/api/health` 正常，异常接口返回可理解的提示。
 - 未登录访问四个工作区时进入 `/access`，业务 API 返回 HTTP 401。
 - 有效邀请码可建立 HttpOnly Cookie 会话，退出、禁用和撤销后会话失效。
+- `/access` 未勾选协议时不能提交；直接调用兑换 API 未确认或使用错误政策版本时被拒绝。
+- 政策版本更新后旧 Beta 会话回到 `/access` 重新确认，不重复消耗邀请码。
+- `/privacy`、`/terms`、`/rights`、`/ai-disclosure` 均返回 200，桌面与手机没有横向溢出。
+- `/rights` 只删除列明业务 localStorage Key，保留主题设置，并同时退出 Beta 会话。
+- 四个工作区均显示统一 AI 辅助提示，公共页和邀请码页底部入口可用。
+- `npm run compliance:check` 通过，服务器会话同步保持关闭。
 - Redis 容器没有宿主机端口映射，Redis 中不存在邀请码或会话令牌明文。
 - 外部伪造 `X-Real-IP` / `X-Forwarded-For` 不会覆盖 Nginx 写入的真实连接地址，Redis 只出现 IP HMAC。
 - 5 次/分钟用户限制、20 次/分钟 IP 限制、60 单位日额度和 8 并发保护符合环境配置。
@@ -146,6 +177,7 @@ IP 识别规则：合法 IPv4 会规范化十进制分段，IPv6 会压缩并转
 npm run typecheck
 npm test
 npm run build
+npm run compliance:check
 docker compose -f compose.production.yml up -d --build
 ```
 
@@ -154,8 +186,12 @@ docker compose -f compose.production.yml up -d --build
 ## 9. 公测前仍需完成
 
 - 增加正式监控告警接收端；当前 70% warning 仅输出一次脱敏服务端日志。
-- 为所有接收用户材料的接口增加日志脱敏、请求追踪和错误监控。
-- 制定用户内容删除、密钥轮换、数据备份和安全事件响应流程。
+- 由产品经理和专业顾问确认真实运营主体、政策日期、模型/服务商、备案或登记信息与投诉反馈时限。
+- 制定邀请码状态、运行日志、供应商副本及未来服务器会话的正式保存和删除周期。
+- 完成安全的服务器会话所有权验证和用户自助删除机制；确认前保持同步关闭。
+- 根据 `docs/ai-content-labeling-gap.md` 确认 PDF、DOCX、复制文本的显式/隐式标识要求。
+- 确认属地算法备案、安全评估、生成式 AI 登记、跨境及未成年人要求。
+- 制定密钥轮换、数据备份和安全事件响应流程。
 - 若开启账号或跨设备同步，将文件会话存储迁移到数据库与对象存储。
 - 对隐私政策、AI 生成内容标识、备案和数据处理安排进行正式合规审查。
 
@@ -174,3 +210,5 @@ docker compose -f compose.production.yml logs --tail=200 app redis
 ```
 
 测试清理只能操作部署时明确设置的测试命名空间，禁止在生产 Redis 使用 `FLUSHALL`、`KEYS *` 或删除全部 `interview-studio:*`。
+
+本手册、公开政策页面和现有技术措施不构成法律意见。未完成真实运营信息填写及属地/专业确认前，不得宣称产品已经正式合规上线。

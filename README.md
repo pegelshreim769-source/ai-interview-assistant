@@ -84,11 +84,16 @@ tailor-chinese-resumes-ts@0.1.0
 | `/mock-interview` | 模拟面试 |
 | `/custom-interview` | 定制面试 |
 | `/access` | 封闭 Beta 邀请码入口 |
+| `/privacy` | 隐私政策与实际数据处理说明 |
+| `/terms` | 用户协议与 AI 辅助内容使用规则 |
+| `/rights` | 本机数据清除、个人信息请求与投诉入口 |
+| `/ai-disclosure` | AI 服务商、模型、数据发送与标识范围公示 |
 | `/admin/login` | 独立管理员登录 |
 | `/admin/usage` | 仅含匿名聚合数据的用量与费用看板 |
 | `/api/access/redeem` | 兑换邀请码并建立会话 |
 | `/api/access/session` | 检查当前封闭测试会话 |
 | `/api/access/logout` | 注销当前封闭测试会话 |
+| `/api/access/accept` | 旧会话或政策更新后的重新确认 |
 | `/api/health` | 公开健康检查 |
 | `/api/resume-studio` | 简历工作台独立动作 API |
 | `/api/resume-studio/extract` | 简历与 JD 材料解析 |
@@ -182,6 +187,18 @@ BETA_METRICS_HOURLY_RETENTION_HOURS=168
 BETA_METRICS_DAILY_RETENTION_DAYS=90
 ADMIN_ACCESS_TOKEN_HASH=replace_with_generated_sha256_hash
 ADMIN_SESSION_HOURS=8
+
+PUBLIC_OPERATOR_NAME=replace_with_operator_name
+PUBLIC_CONTACT_EMAIL=replace_with_contact_email
+PUBLIC_POLICY_VERSION=replace_with_policy_version
+PUBLIC_POLICY_EFFECTIVE_DATE=replace_with_yyyy_mm_dd
+PUBLIC_POLICY_UPDATED_DATE=replace_with_yyyy_mm_dd
+PUBLIC_AI_PROVIDER_NAME=replace_with_ai_provider_name
+PUBLIC_CHAT_MODEL_NAME=replace_with_chat_model_name
+PUBLIC_ASR_PROVIDER_NAME=replace_with_asr_provider_name
+PUBLIC_ASR_MODEL_NAME=replace_with_asr_model_name
+PUBLIC_MODEL_FILING_INFO=replace_with_verified_filing_info
+PUBLIC_COMPLAINT_RESPONSE_DAYS=replace_with_response_days
 ```
 
 建议在 Beta 阶段保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`，优先使用浏览器本地存储。
@@ -256,6 +273,24 @@ docker compose -f compose.production.yml run --rm admin-tools sessions-revoke
 
 Docker 的 app 与 Redis 使用 `json-file` 日志驱动，单文件最多 10 MB、最多 3 个文件。查看日志使用 `docker compose -f compose.production.yml logs app redis`。只可定向删除明确测试前缀（例如 `interview-studio:metrics:test:*`）；不得使用 `FLUSHALL` 或 `KEYS *` 清理生产数据。
 
+## 隐私、协议确认与 AI 信息公示
+
+四个工作区、邀请码页和四个公共政策页底部均提供稳定入口。工作区使用共享提示显示“AI 辅助生成，仅供求职练习，请人工核验。”当前界面提示不代表已经满足所有导出文件显式或隐式元数据标识要求，技术差距记录在 `docs/ai-content-labeling-gap.md`。
+
+邀请码兑换要求用户主动勾选用户协议和隐私政策，API 同时校验当前 `PUBLIC_POLICY_VERSION`。Redis 的 Beta 会话仅新增政策版本与接受时间，不记录原始 IP 或用户材料。旧会话或政策版本变化时会返回 `/access` 重新确认；保留原会话并通过 `/api/access/accept` 更新确认，不重复消耗邀请码。确认前不能访问工作区或业务 API。
+
+`/rights` 的“清除本机数据”只删除项目列明的 6 个业务 localStorage Key，不调用 `localStorage.clear()`，因此不会删除主题偏好或其他网站数据；清除后同时注销 Beta 会话。投诉表单只在浏览器生成 `mailto:`，不写入服务器日志、Redis 或数据库。
+
+服务器会话同步仍只依赖 `client_id`，缺少正式账号归属验证。生产必须保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`，任务四没有增加按 client_id 删除文件的不安全接口。完整数据流、TTL 和待确认事项见 `docs/compliance-data-map.md`。
+
+公开运营信息只从服务端环境变量读取，不使用 `NEXT_PUBLIC_`。普通 `npm run build` 允许占位配置，便于本地开发；正式上线前必须填写真实信息并运行：
+
+```bash
+npm run compliance:check
+```
+
+缺失值、占位符、非法邮箱/日期/版本/反馈天数，或 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=true` 都会使检查失败。必须由产品经理确认运营主体、联系邮箱、政策日期、实际服务商和模型、备案或登记信息及反馈时限；这些页面和技术措施不构成法律意见，也不能作为“已经合规上线”的结论。
+
 ## 封闭 Beta 邀请码
 
 邀请码和会话只以 SHA-256 哈希形式存入 Redis。邀请码明文只在创建成功时显示一次，请通过安全渠道交付；之后无法从 Redis 恢复。
@@ -300,6 +335,7 @@ npm run dev        # 启动本地开发服务
 npm run lint       # ESLint 检查
 npm run typecheck  # TypeScript 类型检查
 npm test           # 简历事实与证据校验测试
+npm run compliance:check # 上线前公开运营信息与会话同步门槛检查
 npm run test:redis-usage # 在 REDIS_URL 指向的测试 Redis 中验证 Lua 原子操作
 npm run build      # 生产构建
 npm run start      # 启动生产服务
@@ -353,8 +389,10 @@ docker compose -f compose.production.yml up -d --build
 - 请勿上传身份证号、详细住址、银行信息、公司机密或未公开业务数据。
 - 简历、JD、文字回答和语音转写内容会发送给项目配置的 AI、OCR 或 ASR 服务处理。
 - 建议在上传前移除手机号、私人邮箱、照片和其他与练习无关的个人信息。
-- 历史记录和简历工作台草稿默认保存在当前浏览器；清除站点数据后会一并移除。
+- 历史记录和简历工作台草稿默认保存在当前浏览器；可在 `/rights` 只清除本项目业务数据。
 - 服务器会话同步默认关闭，仅在显式设置 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=true` 后启用。
+- 生产合规检查会阻止开启当前缺少安全所有权验证的服务器会话同步。
+- 隐私政策、用户协议和 AI 公示需要在上线前由产品经理与专业顾问结合真实运营配置审阅。
 
 ## 当前限制
 

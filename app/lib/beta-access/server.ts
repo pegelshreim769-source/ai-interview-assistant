@@ -3,6 +3,7 @@ import "server-only";
 import { getBetaRedisClient } from "./redis-client";
 import { RedisBetaAccessStore } from "./redis-store";
 import { BetaAccessService } from "./service";
+import { currentPolicyVersion } from "../compliance/config";
 
 function readSessionDays() {
   const value = Number(process.env.BETA_SESSION_DAYS || "14");
@@ -18,7 +19,8 @@ export function getBetaAccessService() {
   if (!globalForBetaAccess.betaAccessService) {
     globalForBetaAccess.betaAccessService = new BetaAccessService({
       store: new RedisBetaAccessStore(getBetaRedisClient),
-      sessionDays: readSessionDays()
+      sessionDays: readSessionDays(),
+      currentPolicyVersion: currentPolicyVersion()
     });
   }
   return globalForBetaAccess.betaAccessService;

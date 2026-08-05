@@ -84,6 +84,8 @@ tailor-chinese-resumes-ts@0.1.0
 | `/mock-interview` | 模拟面试 |
 | `/custom-interview` | 定制面试 |
 | `/access` | 封闭 Beta 邀请码入口 |
+| `/admin/login` | 独立管理员登录 |
+| `/admin/usage` | 仅含匿名聚合数据的用量与费用看板 |
 | `/api/access/redeem` | 兑换邀请码并建立会话 |
 | `/api/access/session` | 检查当前封闭测试会话 |
 | `/api/access/logout` | 注销当前封闭测试会话 |
@@ -176,6 +178,10 @@ BETA_DAILY_AI_BUDGET_CNY=20
 BETA_MONTHLY_AI_BUDGET_CNY=300
 BETA_BUDGET_TIMEZONE=Asia/Shanghai
 BETA_IP_HASH_SECRET=replace_with_a_long_random_secret
+BETA_METRICS_HOURLY_RETENTION_HOURS=168
+BETA_METRICS_DAILY_RETENTION_DAYS=90
+ADMIN_ACCESS_TOKEN_HASH=replace_with_generated_sha256_hash
+ADMIN_SESSION_HOURS=8
 ```
 
 建议在 Beta 阶段保持 `NEXT_PUBLIC_ENABLE_SERVER_SESSION_SYNC=false`，优先使用浏览器本地存储。
@@ -224,6 +230,31 @@ openssl rand -hex 32
 - 达到 100%：拒绝所有新的 AI 请求；页面、邀请码、退出、历史记录与健康检查仍可用。
 
 调整限制时只修改服务端环境变量并重启应用，不要把真实密钥提交到 Git。测试环境需要重置时，只删除 `interview-studio:usage-test:*` 或明确测试命名空间的 Key；生产环境不得执行 `FLUSHALL`，也不要随意删除全部 `interview-studio:usage:*` Key。
+
+## 脱敏日志、聚合指标与管理页面
+
+每个受保护的 AI 请求都会由服务端生成随机 UUID，并通过 `X-Request-ID` 返回。标准输出只写单行 JSON，字段白名单为：`event`、`request_id`、`timestamp`、`endpoint`、`provider_kind`、`model`、`status`、`status_class`、`outcome`、`error_code`、`duration_ms`、`units`、`estimated_cost_cents`、`stream_state`、`retryable`。
+
+系统不会把简历、JD、面试回答、语音或转写全文、上传文件、提示词、模型响应、API Key、Cookie、邀请码、邀请码哈希、管理员令牌、原始 IP、完整会话哈希、完整邀请 ID、请求头全集、请求体、用户查询参数、异常堆栈或带密码的 Redis 地址写入日志、指标或管理页面。
+
+Redis 只保存小时和自然日聚合：小时默认保留 168 小时，日指标默认保留 90 天；每日活跃匿名会话使用二次 HMAC 后写入 HyperLogLog，不形成可枚举用户列表。管理页面支持今天、最近 7 天和最近 30 天，展示请求、成功率、429/503、内部错误分类、接口与模型汇总、费用单位、整数分估算费用、平均/P95 延迟及任务二真实日/月预算状态。估算费用基于固定费用单位，不等于模型厂商实际账单；当前暂无可靠的精确 Token 统计。
+
+管理员身份独立于 Beta 邀请码。生成至少 256 bit 的令牌及其哈希：
+
+```bash
+npm run admin:token:create
+# 将一次性输出的 ADMIN_ACCESS_TOKEN_HASH 写入服务端环境变量，再重启应用
+```
+
+明文令牌只显示一次，不会自动写入文件。管理员在 `/admin/login` 输入令牌后获得独立的 `HttpOnly`、生产环境 `Secure`、`SameSite=Strict` Cookie，会话默认 8 小时。Cookie 的 `Path=/` 是为了同时覆盖 `/admin/*` 页面与 `/api/admin/*` 接口，不与 Beta Cookie 共用名称或验证逻辑。单个可信 IP 每 15 分钟最多尝试 5 次；Redis 或生产配置不可用时默认拒绝。撤销当前令牌关联的全部会话：
+
+```bash
+npm run admin:sessions:revoke
+# 生产 Compose：
+docker compose -f compose.production.yml run --rm admin-tools sessions-revoke
+```
+
+Docker 的 app 与 Redis 使用 `json-file` 日志驱动，单文件最多 10 MB、最多 3 个文件。查看日志使用 `docker compose -f compose.production.yml logs app redis`。只可定向删除明确测试前缀（例如 `interview-studio:metrics:test:*`）；不得使用 `FLUSHALL` 或 `KEYS *` 清理生产数据。
 
 ## 封闭 Beta 邀请码
 

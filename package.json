@@ -8,12 +8,15 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --conditions=react-server --import tsx --test app/lib/resume-studio/__tests__/*.test.ts app/lib/beta-access/__tests__/*.test.ts app/lib/beta-usage/__tests__/*.test.ts",
+    "test": "node --conditions=react-server --import tsx --test app/lib/resume-studio/__tests__/*.test.ts app/lib/beta-access/__tests__/*.test.ts app/lib/beta-usage/__tests__/*.test.ts app/lib/observability/__tests__/*.test.ts app/lib/admin/__tests__/*.test.ts",
     "test:redis-usage": "node --conditions=react-server --import tsx scripts/verify-beta-usage-redis.ts",
+    "test:redis-observability": "node --conditions=react-server --import tsx scripts/verify-observability-redis.ts",
     "invite:create": "node --conditions=react-server --import tsx scripts/invitations.ts create",
     "invite:list": "node --conditions=react-server --import tsx scripts/invitations.ts list",
     "invite:disable": "node --conditions=react-server --import tsx scripts/invitations.ts disable",
     "invite:revoke": "node --conditions=react-server --import tsx scripts/invitations.ts revoke",
+    "admin:token:create": "node --conditions=react-server --import tsx scripts/admin.ts token-create",
+    "admin:sessions:revoke": "node --conditions=react-server --import tsx scripts/admin.ts sessions-revoke",
     "eval:routes": "node scripts/eval-routes.mjs"
   },
   "dependencies": {

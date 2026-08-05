@@ -79,6 +79,10 @@ export interface BetaUsageStore {
     leaseTtlMs: number;
   }): Promise<ConcurrencyLeaseResult>;
   releaseConcurrencyLease(leaseId: string): Promise<void>;
+  readBudgetUsage?(input: {
+    dayKey: string;
+    monthKey: string;
+  }): Promise<{ dayCents: number; monthCents: number }>;
 }
 
 export type MeteredRequestContext = {
